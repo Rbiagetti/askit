@@ -132,34 +132,54 @@ function MemoryCard({
   const [swipeX, setSwipeX] = useState(0);
   const [activelySwiping, setActivelySwiping] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const touchStart = useRef({ x: 0, y: 0 });
   const isHorizontal = useRef(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didLongPress = useRef(false);
 
   const doDelete = useCallback(() => {
+    setActionsOpen(false);
     setLeaving(true);
     setTimeout(() => onDelete(memory.id), 250);
   }, [memory.id, onDelete]);
 
+  const cancelLongPress = () => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
+
   const onTouchStart = (e: React.TouchEvent) => {
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     isHorizontal.current = false;
-    setActivelySwiping(true);
+    didLongPress.current = false;
+
+    longPressTimer.current = setTimeout(() => {
+      didLongPress.current = true;
+      setActionsOpen(true);
+      setSwipeX(0);
+      if (navigator.vibrate) navigator.vibrate(12);
+    }, 450);
   };
 
   const onTouchMove = (e: React.TouchEvent) => {
     const dx = e.touches[0].clientX - touchStart.current.x;
     const dy = e.touches[0].clientY - touchStart.current.y;
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) cancelLongPress();
     if (!isHorizontal.current) {
       if (Math.abs(dy) > Math.abs(dx) + 5) { setActivelySwiping(false); return; }
       if (Math.abs(dx) > 8) isHorizontal.current = true;
     }
-    if (isHorizontal.current && dx < 0) setSwipeX(Math.max(dx, -100));
+    if (isHorizontal.current && dx < 0 && !actionsOpen) {
+      setActivelySwiping(true);
+      setSwipeX(Math.max(dx, -100));
+    }
   };
 
   const onTouchEnd = () => {
+    cancelLongPress();
     setActivelySwiping(false);
-    if (swipeX < -60) doDelete();
-    else setSwipeX(0);
+    if (!didLongPress.current && swipeX < -60) doDelete();
+    else if (!didLongPress.current) setSwipeX(0);
   };
 
   const color = DOMAIN_COLOR[memory.domain] || DOMAIN_COLOR.general;
@@ -168,20 +188,11 @@ function MemoryCard({
   if (leaving) return <div style={{ maxHeight: 0, opacity: 0, overflow: "hidden", transition: "all 0.25s" }} />;
 
   return (
-    <div
-      className="relative overflow-hidden"
-      style={{ marginBottom: 1 }}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-    >
-      {/* Swipe delete bg — hidden unless swiping */}
+    <div className="relative overflow-hidden" style={{ marginBottom: 1 }}>
+      {/* Swipe bg */}
       <div
         className="absolute inset-0 flex items-center justify-end pr-5"
-        style={{
-          background: `rgba(255,59,48,${swipeProgress * 0.9})`,
-          visibility: swipeX < -8 ? "visible" : "hidden",
-        }}
+        style={{ background: `rgba(255,59,48,${swipeProgress * 0.9})`, visibility: swipeX < -8 ? "visible" : "hidden" }}
       >
         <span className="text-white text-[11px] tracking-widest uppercase font-mono">elimina</span>
       </div>
@@ -190,11 +201,14 @@ function MemoryCard({
       <div
         className="relative group px-4 py-3"
         style={{
-          background: highlight ? "rgba(255,255,255,0.03)" : "transparent",
-          borderLeft: `2px solid ${highlight ? color : "transparent"}`,
+          background: actionsOpen ? "rgba(255,255,255,0.04)" : highlight ? "rgba(255,255,255,0.03)" : "transparent",
+          borderLeft: `2px solid ${actionsOpen ? "rgba(255,255,255,0.25)" : highlight ? color : "transparent"}`,
           transform: `translateX(${swipeX}px)`,
-          transition: activelySwiping ? "none" : "transform 0.22s ease",
+          transition: activelySwiping ? "none" : "transform 0.22s ease, background 0.15s",
         }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
       >
         {/* Top row */}
         <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -231,22 +245,45 @@ function MemoryCard({
           </div>
         )}
 
-        {/* Hover actions — bottom right */}
-        <div className="flex justify-end gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={() => onEdit(memory)}
-            className="text-[10px] px-2 py-0.5 border tracking-wide"
-            style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
-          >
-            ✎ Modifica
-          </button>
-          <button
-            onClick={doDelete}
-            className="text-[10px] px-2 py-0.5 border tracking-wide"
-            style={{ borderColor: "var(--red)", color: "var(--red)", background: "rgba(255,59,48,0.08)" }}
-          >
-            ✕ Elimina
-          </button>
+        {/* Action bar — long press (mobile) OR hover (desktop) */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateRows: actionsOpen ? "1fr" : "0fr",
+            transition: "grid-template-rows 0.2s ease",
+          }}
+          className="group-hover:[grid-template-rows:1fr]"
+        >
+          <div className="overflow-hidden">
+            <div className="flex gap-2 pt-2.5">
+              <button
+                onTouchEnd={(e) => { e.stopPropagation(); setActionsOpen(false); onEdit(memory); }}
+                onClick={() => { setActionsOpen(false); onEdit(memory); }}
+                className="flex-1 py-1.5 text-[11px] tracking-[0.12em] uppercase border transition-colors"
+                style={{ borderColor: "var(--border)", color: "var(--fg-muted)", background: "rgba(255,255,255,0.04)" }}
+              >
+                ✎ Modifica
+              </button>
+              <button
+                onTouchEnd={(e) => { e.stopPropagation(); doDelete(); }}
+                onClick={doDelete}
+                className="flex-1 py-1.5 text-[11px] tracking-[0.12em] uppercase border transition-colors"
+                style={{ borderColor: "var(--red)", color: "var(--red)", background: "rgba(255,59,48,0.08)" }}
+              >
+                ✕ Elimina
+              </button>
+              {actionsOpen && (
+                <button
+                  onTouchEnd={(e) => { e.stopPropagation(); setActionsOpen(false); }}
+                  onClick={() => setActionsOpen(false)}
+                  className="px-3 py-1.5 text-[11px] border"
+                  style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
