@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local database (keep data local, not in repo)
+*.db
+*.db-shm
+*.db-wal
+
+# scripts
+ingest_test.py
