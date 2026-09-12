@@ -6,6 +6,7 @@ import { Memory, SearchResult } from "@/components/types";
 import EditModal from "@/components/EditModal";
 import MemoryCard from "@/components/MemoryCard";
 import DuplicateModal from "@/components/DuplicateModal";
+import VaultView from "@/components/VaultView";
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
@@ -13,7 +14,7 @@ export default function Home() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [input, setInput] = useState("");
-  const [mode, setMode] = useState<"add" | "search" | "calendar">("add");
+  const [mode, setMode] = useState<"add" | "search" | "calendar" | "vault">("add");
   const [processing, setProcessing] = useState(false);
   const [recording, setRecording] = useState(false);
   // Removed askResult state (unified search)
@@ -222,7 +223,7 @@ export default function Home() {
     setProcessing(false);
   };
 
-  const selectMode = (m: "add" | "search" | "calendar") => {
+  const selectMode = (m: "add" | "search" | "calendar" | "vault") => {
     setMode(m);
     setSearchResult(null);
   };
@@ -285,7 +286,7 @@ export default function Home() {
 
           {/* Mode selector */}
           <div className="flex gap-1">
-            {(["add", "search", "calendar"] as const).map((m) => (
+            {(["add", "search", "calendar", "vault"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => selectMode(m)}
@@ -296,13 +297,13 @@ export default function Home() {
                   border: mode === m ? "1px solid var(--fg)" : "1px solid var(--border)",
                 }}
               >
-                {m === "add" ? "+ Aggiungi" : m === "search" ? "🔍 Cerca" : "📅 Calendar"}
+                {m === "add" ? "+ Aggiungi" : m === "search" ? "🔍 Cerca" : m === "calendar" ? "📅 Calendar" : "🗂 Vault"}
               </button>
             ))}
           </div>
 
           {/* Input row */}
-          {mode !== "calendar" && <div className="flex gap-2">
+          {mode !== "calendar" && mode !== "vault" && <div className="flex gap-2">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -358,7 +359,7 @@ export default function Home() {
           </div>}
 
           {/* Submit */}
-          {mode !== "calendar" && <button
+          {mode !== "calendar" && mode !== "vault" && <button
             onClick={handleSubmit}
             disabled={processing || !input.trim()}
             className="w-full py-2 text-[11px] tracking-[0.15em] uppercase transition-all disabled:opacity-25"
@@ -376,7 +377,7 @@ export default function Home() {
 
 
           {/* Search result block */}
-          {mode !== "calendar" && searchResult && (
+          {mode !== "calendar" && mode !== "vault" && searchResult && (
             <div className="fade-in border-b border-[var(--border)] px-4 py-4 space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] tracking-[0.15em] uppercase" style={{ color: "var(--fg-muted)" }}>
@@ -429,6 +430,9 @@ export default function Home() {
               )}
             </div>
           )}
+          {/* Vault view */}
+          {mode === "vault" && loaded && <VaultView />}
+
           {/* Calendar view */}
           {mode === "calendar" && loaded && (
             <div className="pt-3 pb-4 px-3 space-y-3">
@@ -512,13 +516,13 @@ export default function Home() {
           )}
 
           {/* Memory list */}
-          {mode !== "calendar" && !loaded ? (
+          {mode !== "calendar" && mode !== "vault" && !loaded ? (
             <div className="flex justify-center gap-2 py-16">
               <div className="glyph-dot" />
               <div className="glyph-dot" style={{ animationDelay: "0.4s" }} />
               <div className="glyph-dot" style={{ animationDelay: "0.8s" }} />
             </div>
-          ) : mode !== "calendar" && memories.length === 0 ? (
+          ) : mode !== "calendar" && mode !== "vault" && memories.length === 0 ? (
             <div className="text-center py-20 space-y-3">
               <div className="flex justify-center gap-2">
                 <div className="glyph-dot" />
@@ -529,7 +533,7 @@ export default function Home() {
                 Nessuna memoria. Inizia scrivendo qualcosa.
               </p>
             </div>
-          ) : mode !== "calendar" ? (
+          ) : mode !== "calendar" && mode !== "vault" ? (
             <div className="pt-2 pb-4">
               {memories.map((m) => (
                 <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} />

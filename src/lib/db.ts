@@ -82,6 +82,9 @@ function migrate(db: Database.Database) {
     "ALTER TABLE items ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0",
     // dim lets us invalidate every vector in bulk if the embedding model changes
     "ALTER TABLE embeddings ADD COLUMN dim INTEGER",
+    // manual override guard: when set, a future re-parse must not clobber domain
+    // (not yet enforced in the PUT handler — see src/app/api/items/route.ts PATCH)
+    "ALTER TABLE items ADD COLUMN domain_locked INTEGER NOT NULL DEFAULT 0",
     // traversal goes both ways: entity -> items, not just item -> entities
     "CREATE INDEX IF NOT EXISTS idx_item_entities_entity ON item_entities(entity_id)",
     // collapse any pre-existing duplicates, then make the upserts in lib/graph.ts possible
