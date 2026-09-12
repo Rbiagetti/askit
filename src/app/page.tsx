@@ -16,6 +16,10 @@ export default function Home() {
   const [mode, setMode] = useState<"add" | "search" | "calendar">("add");
   const [processing, setProcessing] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [autoSubmitLeft, setAutoSubmitLeft] = useState<number | null>(null); // ms left, null = inactive
+  const [routedNotice, setRoutedNotice] = useState<string | null>(null); // raw text auto-routed to search
   // Removed askResult state (unified search)
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [totalTokens, setTotalTokens] = useState(0);
@@ -31,6 +35,31 @@ export default function Home() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // VAD (voice activity detection) refs — auto-stop on silence
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const vadIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordingStartRef = useRef(0);
+  const baselineRef = useRef<number | null>(null);
+  const baselineSamplesRef = useRef<number[]>([]);
+  const silenceStartRef = useRef<number | null>(null);
+  // Auto-submit countdown after voice transcription
+  const autoSubmitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSubmitIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Refs mirroring state read inside async/timer callbacks, to avoid stale closures
+  const modeRef = useRef(mode);
+  const processingRef = useRef(processing);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { processingRef.current = processing; }, [processing]);
+
+  // Stop any live VAD timer / AudioContext and auto-submit countdown on unmount.
+  useEffect(() => {
+    return () => {
+      if (vadIntervalRef.current) clearInterval(vadIntervalRef.current);
+      audioCtxRef.current?.close().catch(() => {});
+      if (autoSubmitTimeoutRef.current) clearTimeout(autoSubmitTimeoutRef.current);
+      if (autoSubmitIntervalRef.current) clearInterval(autoSubmitIntervalRef.current);
+    };
+  }, []);
 
   // ── Load from SQLite on mount ──
   useEffect(() => {
@@ -73,20 +102,33 @@ export default function Home() {
   };
 
   // ── Add memory → save to SQLite ──
-  const addMemory = async () => {
-    if (!input.trim() || processing) return;
+  // `raw` is passed explicitly (rather than read from `input` state) so this can be
+  // called safely from timers/callbacks (voice auto-submit) without stale closures.
+  // A question ("intent: explore") gets routed to search by /api/parse instead of
+  // creating a note — `opts.force` overrides that ("salva comunque come nota").
+  const submitAdd = async (raw: string, opts: { force?: boolean; clearInput?: boolean } = {}) => {
+    if (!raw.trim() || processingRef.current) return;
     setProcessing(true);
-    const raw = input;
-    setInput("");
+    if (opts.clearInput) setInput("");
+    cancelAutoSubmit();
     try {
       const res = await fetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: raw }),
+        body: JSON.stringify({ text: raw, ...(opts.force ? { force: "save" } : {}) }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
+      if (data.routed === "search") {
+        setMode("search");
+        setRoutedNotice(raw);
+        setProcessing(false);
+        await runSearch(raw);
+        return;
+      }
+
+      setRoutedNotice(null);
       const newMem: Memory = {
         id: data.id,
         text: raw,
@@ -102,10 +144,22 @@ export default function Home() {
       setMemories((prev) => [newMem, ...prev]);
       showToast(`${data.type} · ${data.domain}`);
     } catch (e) {
-      setInput(raw);
+      if (opts.clearInput) setInput(raw);
       showToast(`Errore: ${e instanceof Error ? e.message : "sconosciuto"}`, false);
     }
     setProcessing(false);
+  };
+
+  const addMemory = () => submitAdd(input, { clearInput: true });
+
+  // User tapped "salva comunque come nota" on a note that got auto-routed to search.
+  const forceSaveAsNote = async () => {
+    if (!routedNotice) return;
+    const raw = routedNotice;
+    setRoutedNotice(null);
+    await submitAdd(raw, { force: true });
+    setMode("add");
+    setSearchResult(null);
   };
 
 
@@ -175,7 +229,54 @@ export default function Home() {
   };
 
   // ── Voice ──
+  // Auto-stop on silence: RMS over ~100ms windows, background noise sampled during
+  // the first 500ms as baseline, 2s continuously below (baseline + margin) triggers
+  // stopRecording(). Minimum recording length 1s regardless of silence.
+  const VAD_WINDOW_MS = 100;
+  const VAD_BASELINE_MS = 500;
+  const VAD_MIN_RECORDING_MS = 1000;
+  const VAD_SILENCE_MS = 2000;
+  const VAD_MARGIN = 0.02;
+  const AUTO_SUBMIT_MS = 4000;
+
+  const stopVad = () => {
+    if (vadIntervalRef.current) { clearInterval(vadIntervalRef.current); vadIntervalRef.current = null; }
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
+    baselineRef.current = null;
+    baselineSamplesRef.current = [];
+    silenceStartRef.current = null;
+    setAudioLevel(0);
+    setRecordingSeconds(0);
+  };
+
+  const cancelAutoSubmit = () => {
+    if (autoSubmitTimeoutRef.current) { clearTimeout(autoSubmitTimeoutRef.current); autoSubmitTimeoutRef.current = null; }
+    if (autoSubmitIntervalRef.current) { clearInterval(autoSubmitIntervalRef.current); autoSubmitIntervalRef.current = null; }
+    setAutoSubmitLeft(null);
+  };
+
+  // Countdown after a voice transcription lands in the input; any interaction with
+  // the input cancels it (see textarea handlers below). Routes like handleSubmit
+  // would, using explicit `raw` text + modeRef to dodge the MediaRecorder callback's
+  // stale closure over `input`/`mode`.
+  const armAutoSubmit = (raw: string) => {
+    cancelAutoSubmit();
+    const deadline = Date.now() + AUTO_SUBMIT_MS;
+    setAutoSubmitLeft(AUTO_SUBMIT_MS);
+    autoSubmitIntervalRef.current = setInterval(() => {
+      const left = deadline - Date.now();
+      setAutoSubmitLeft(left > 0 ? left : 0);
+    }, 100);
+    autoSubmitTimeoutRef.current = setTimeout(() => {
+      cancelAutoSubmit();
+      if (modeRef.current === "search") submitSearch(raw);
+      else submitAdd(raw, { clearInput: true });
+    }, AUTO_SUBMIT_MS);
+  };
+
   const startRecording = async () => {
+    cancelAutoSubmit();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
@@ -190,23 +291,81 @@ export default function Home() {
           fd.append("audio", new Blob(chunksRef.current, { type: "audio/webm" }), "rec.webm");
           const res = await fetch("/api/transcribe", { method: "POST", body: fd });
           const d = await res.json();
-          if (d.text) setInput(d.text);
+          if (d.text) {
+            setInput(d.text);
+            armAutoSubmit(d.text);
+          }
         } catch { showToast("Errore trascrizione", false); }
         setProcessing(false);
       };
       mr.start();
       setRecording(true);
+
+      // ── VAD setup ──
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        const audioCtx = new AudioCtx();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        audioCtxRef.current = audioCtx;
+        recordingStartRef.current = performance.now();
+        baselineRef.current = null;
+        baselineSamplesRef.current = [];
+        silenceStartRef.current = null;
+
+        const data = new Uint8Array(analyser.fftSize);
+        vadIntervalRef.current = setInterval(() => {
+          analyser.getByteTimeDomainData(data);
+          let sumSq = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = (data[i] - 128) / 128;
+            sumSq += v * v;
+          }
+          const rms = Math.sqrt(sumSq / data.length);
+          setAudioLevel(rms);
+
+          const elapsedMs = performance.now() - recordingStartRef.current;
+          setRecordingSeconds(elapsedMs / 1000);
+
+          if (elapsedMs < VAD_BASELINE_MS) {
+            baselineSamplesRef.current.push(rms);
+            return;
+          }
+          if (baselineRef.current === null) {
+            const samples = baselineSamplesRef.current;
+            baselineRef.current = samples.length
+              ? samples.reduce((a, b) => a + b, 0) / samples.length
+              : rms;
+          }
+          if (elapsedMs < VAD_MIN_RECORDING_MS) return;
+
+          const threshold = baselineRef.current + VAD_MARGIN;
+          if (rms < threshold) {
+            if (silenceStartRef.current === null) silenceStartRef.current = performance.now();
+            else if (performance.now() - silenceStartRef.current >= VAD_SILENCE_MS) {
+              stopRecording();
+            }
+          } else {
+            silenceStartRef.current = null;
+          }
+        }, VAD_WINDOW_MS);
+      }
     } catch { showToast("Microfono non disponibile", false); }
   };
 
-  const stopRecording = () => { mediaRecorderRef.current?.stop(); setRecording(false); };
+  const stopRecording = () => {
+    stopVad();
+    mediaRecorderRef.current?.stop();
+    setRecording(false);
+  };
 
-  const executeSearch = async () => {
-    if (!input.trim() || processing) return;
+  // POST /api/search + populate searchResult. Shared by manual search and the
+  // auto-routing path (intent: explore) in submitAdd above.
+  const runSearch = async (query: string) => {
     setProcessing(true);
     setSearchResult(null);
-    const query = input;
-    setInput("");
     try {
       const res = await fetch("/api/search", {
         method: "POST",
@@ -222,9 +381,20 @@ export default function Home() {
     setProcessing(false);
   };
 
+  // `query` passed explicitly for the same stale-closure reason as submitAdd.
+  const submitSearch = async (query: string) => {
+    if (!query.trim() || processingRef.current) return;
+    setInput("");
+    cancelAutoSubmit();
+    await runSearch(query);
+  };
+
+  const executeSearch = () => submitSearch(input);
+
   const selectMode = (m: "add" | "search" | "calendar") => {
     setMode(m);
     setSearchResult(null);
+    setRoutedNotice(null);
   };
 
   const handleSubmit = () => {
@@ -305,8 +475,12 @@ export default function Home() {
           {mode !== "calendar" && <div className="flex gap-2">
             <textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit(); }}
+              onChange={(e) => { cancelAutoSubmit(); setInput(e.target.value); }}
+              onClick={cancelAutoSubmit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit();
+                else if (e.key === "Escape") cancelAutoSubmit();
+              }}
               placeholder={
                 mode === "add"
                   ? "Scrivi o detta qualcosa da ricordare..."
@@ -357,6 +531,51 @@ export default function Home() {
             </div>
           </div>}
 
+          {/* Recording level + timer (VAD feedback) */}
+          {recording && (
+            <div className="flex items-center gap-2 fade-in">
+              <span className="text-[10px] tracking-wider tabular-nums" style={{ color: "var(--red)" }}>
+                ● {recordingSeconds.toFixed(1)}s
+              </span>
+              <div className="flex-1 h-1" style={{ background: "var(--border)" }}>
+                <div
+                  className="h-full"
+                  style={{
+                    width: `${Math.min(100, audioLevel * 400)}%`,
+                    background: "var(--red)",
+                    transition: "width 0.08s linear",
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Auto-submit countdown after voice transcription */}
+          {autoSubmitLeft !== null && (
+            <div className="flex items-center gap-2 fade-in">
+              <div className="flex-1 h-1" style={{ background: "var(--border)" }}>
+                <div
+                  className="h-full"
+                  style={{
+                    width: `${(autoSubmitLeft / AUTO_SUBMIT_MS) * 100}%`,
+                    background: "var(--accent)",
+                    transition: "width 0.1s linear",
+                  }}
+                />
+              </div>
+              <span className="text-[10px] tracking-wider tabular-nums" style={{ color: "var(--fg-muted)" }}>
+                invio in {Math.ceil(autoSubmitLeft / 1000)}s
+              </span>
+              <button
+                onClick={cancelAutoSubmit}
+                className="text-[10px] uppercase tracking-wider"
+                style={{ color: "var(--red)" }}
+              >
+                Annulla
+              </button>
+            </div>
+          )}
+
           {/* Submit */}
           {mode !== "calendar" && <button
             onClick={handleSubmit}
@@ -383,13 +602,30 @@ export default function Home() {
                   🔍 RISERCA SEMANTICA
                 </p>
                 <button
-                  onClick={() => setSearchResult(null)}
+                  onClick={() => { setSearchResult(null); setRoutedNotice(null); }}
                   className="text-[10px] tracking-wider uppercase"
                   style={{ color: "var(--fg-muted)" }}
                 >
                   × chiudi
                 </button>
               </div>
+
+              {/* Auto-routed from "add": this looked like a question, not a note */}
+              {routedNotice && (
+                <div
+                  className="flex items-center justify-between gap-2 px-3 py-2 text-[10px]"
+                  style={{ border: "1px solid var(--border)", color: "var(--fg-muted)" }}
+                >
+                  <span className="tracking-wider uppercase">interpretato come domanda</span>
+                  <button
+                    onClick={forceSaveAsNote}
+                    className="uppercase tracking-wider whitespace-nowrap"
+                    style={{ color: "var(--accent)" }}
+                  >
+                    salva comunque come nota
+                  </button>
+                </div>
+              )}
 
               {searchResult.response && (
                 <div
