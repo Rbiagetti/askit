@@ -19,6 +19,46 @@ Tre correzioni rispetto al piano originale, tutte documentate sotto:
 soglia `SIMILAR_TO` adattiva anziché fissa (§Fase 3b), `PRAGMA user_version`
 anziché confronto di COUNT per l'FTS (§Fase 4), e il limite OTPM del free tier (§4).
 
+## 8. Backlog usabilità (sessione expert-team, 12 settembre 2026)
+
+Dopo le Fasi 0-5, l'utente ha segnalato due gap reali: il flusso vocale richiedeva
+5 interazioni manuali, e le note erano solo una lista piatta senza vista sul grafo
+costruito. Un panel di 6 esperti (skill `expert-team`) ha prodotto un backlog di 12 task,
+sviluppato in **3 worktree paralleli** e integrato con merge sequenziali:
+
+| Fronte | Branch | Task | Esito |
+|---|---|---|---|
+| A · Backend manutenzione | `feat/backend-maintenance` | T-005, T-010, T-011 | ✅ merge pulito, zero conflitti |
+| B · Vocale one-shot | `feat/voice-ux` | T-001→T-004 | ✅ merge pulito, zero conflitti |
+| C · Vault UI | `feat/vault-ui` | T-006→T-009, T-012 | ✅ merge con 3 conflitti attesi, risolti |
+
+**Risultato**: da 5 interazioni a 1 per salvare una nota vocale (VAD + auto-submit
+annullabile + routing su `intent`); il grafo costruito nelle Fasi 3-4 è ora visibile
+in UI (vista Vault, pannello dettaglio con archi tipizzati); manutenzione DB esposta
+via `/api/reindex` (gratis) e `/api/reanalyze` (protetto da rate limit).
+
+**Conflitti di merge**, tutti previsti perché dichiarati in anticipo nei prompt:
+- `api/tree/route.ts` (add/add): due implementazioni indipendenti dello stesso
+  contratto, concordato prima del lancio dei 3 agenti — tenuta quella del Fronte A
+- `lib/db.ts`: entrambi A e C aggiungevano `domain_locked` — stessa colonna, commenti diversi, uniti
+- `app/page.tsx`: B e C toccavano la stessa area (submitSearch / union type di `mode`) — uniti entrambi
+
+**Incidente e correzione**: il Fronte C, testando `POST /api/vault` su un server locale
+con DB isolato, ha usato per errore il `VAULT_PATH` di default — la vault Obsidian
+**reale** dell'utente, non isolata dal worktree — sovrascrivendola con 5 note di test.
+`secondbrain.db` (fonte di verità) non è mai stato toccato. Rilevato dall'agente stesso,
+verificato prima del merge (`sqlite3 secondbrain.db` → 9 item reali intatti), corretto
+con `npm run vault:export`: vault reale rigenerata, nessuna perdita. Lezione per il
+futuro: quando un worktree di test tocca risorse esterne al repo (filesystem fuori
+dalla working dir, non solo il DB), va isolato esplicitamente anche quello, non solo `SB_DB_PATH`.
+
+**Limite scoperto, non un bug**: il routing su `intent` dipende dalla classificazione
+di `qwen/qwen3.6-27b`, che su frasi genuinamente ambigue («cosa devo comprare domani?»
+— domanda o promemoria?) può classificare come `save` invece di `explore`. Verificato
+che la logica di routing stessa è corretta; il limite è nella classificazione, non nel
+codice. Non corretto in questa sessione — richiede una decisione di prodotto su come
+trattare l'ambiguità, non un fix tecnico.
+
 ---
 
 ## 1. Stato attuale verificato
