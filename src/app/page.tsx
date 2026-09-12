@@ -1,417 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { rankByRelevance, detectDuplicates, DuplicateCluster } from "@/lib/tfidf";
-
-interface Memory {
-  id: string;
-  text: string;
-  content: string;
-  type: string;
-  domain: string;
-  entities: string[];
-  timestamp: number;
-  usageCount: number;
-}
-
-interface AskResult {
-  question: string;
-  response: string;
-  relevantIds: string[];
-}
-
-const TYPE_ICONS: Record<string, string> = {
-  note: "○", task: "◇", wishlist: "☆", idea: "◈", reminder: "◎",
-};
-
-const DOMAIN_COLOR: Record<string, string> = {
-  food: "#ff9f43", travel: "#54a0ff", work: "#a29bfe",
-  health: "#00cec9", cinema: "#fd79a8", tech: "#74b9ff",
-  music: "#b2bec3", learning: "#55efc4", shopping: "#fdcb6e",
-  finance: "#ff7675", pets: "#81ecec", general: "#636e72",
-};
-
-function relTime(ts: number): string {
-  const d = Date.now() - ts;
-  if (d < 60000) return "adesso";
-  if (d < 3600000) return `${Math.floor(d / 60000)}min fa`;
-  if (d < 86400000) return `${Math.floor(d / 3600000)}h fa`;
-  if (d < 604800000) return `${Math.floor(d / 86400000)}g fa`;
-  return new Date(ts).toLocaleDateString("it-IT", { day: "2-digit", month: "short" });
-}
-
-// ─── Edit Modal ──────────────────────────────────────────────────────────────
-
-function EditModal({
-  memory,
-  onSave,
-  onClose,
-}: {
-  memory: Memory;
-  onSave: (id: string, text: string) => Promise<void>;
-  onClose: () => void;
-}) {
-  const [text, setText] = useState(memory.text || memory.content);
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (!text.trim() || saving) return;
-    setSaving(true);
-    await onSave(memory.id, text.trim());
-    setSaving(false);
-    onClose();
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
-      style={{ background: "rgba(0,0,0,0.88)" }}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div
-        className="w-full max-w-lg mx-4 mb-4 sm:mb-0"
-        style={{ background: "#0a0a0a", border: "1px solid var(--border)" }}
-      >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--border)]">
-          <span className="text-[11px] tracking-[0.2em] uppercase" style={{ color: "var(--accent)" }}>
-            Modifica memoria
-          </span>
-          <button onClick={onClose} className="text-lg leading-none" style={{ color: "var(--fg-muted)" }}>×</button>
-        </div>
-        <div className="px-5 py-4 space-y-3">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={4}
-            autoFocus
-            className="w-full resize-none text-sm focus:outline-none"
-            style={{
-              background: "var(--bg-input)",
-              border: "1px solid var(--border-focus)",
-              color: "var(--fg)",
-              fontFamily: "inherit",
-              padding: "10px 12px",
-            }}
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={saving || !text.trim()}
-              className="flex-1 py-2 text-[11px] tracking-[0.15em] uppercase transition-all disabled:opacity-30"
-              style={{ background: "var(--fg)", color: "var(--bg)" }}
-            >
-              {saving ? "Salvo..." : "Salva"}
-            </button>
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-[11px] tracking-[0.15em] uppercase border"
-              style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
-            >
-              Annulla
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Memory Card ─────────────────────────────────────────────────────────────
-
-function MemoryCard({
-  memory,
-  onDelete,
-  onEdit,
-  highlight = false,
-}: {
-  memory: Memory;
-  onDelete: (id: string) => void;
-  onEdit: (memory: Memory) => void;
-  highlight?: boolean;
-}) {
-  const [swipeX, setSwipeX] = useState(0);
-  const [activelySwiping, setActivelySwiping] = useState(false);
-  const [leaving, setLeaving] = useState(false);
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const touchStart = useRef({ x: 0, y: 0 });
-  const isHorizontal = useRef(false);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const didLongPress = useRef(false);
-
-  const doDelete = useCallback(() => {
-    setActionsOpen(false);
-    setLeaving(true);
-    setTimeout(() => onDelete(memory.id), 250);
-  }, [memory.id, onDelete]);
-
-  const cancelLongPress = () => {
-    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
-  };
-
-  const onTouchStart = (e: React.TouchEvent) => {
-    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    isHorizontal.current = false;
-    didLongPress.current = false;
-
-    longPressTimer.current = setTimeout(() => {
-      didLongPress.current = true;
-      setActionsOpen(true);
-      setSwipeX(0);
-      if (navigator.vibrate) navigator.vibrate(12);
-    }, 450);
-  };
-
-  const onTouchMove = (e: React.TouchEvent) => {
-    const dx = e.touches[0].clientX - touchStart.current.x;
-    const dy = e.touches[0].clientY - touchStart.current.y;
-    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) cancelLongPress();
-    if (!isHorizontal.current) {
-      if (Math.abs(dy) > Math.abs(dx) + 5) { setActivelySwiping(false); return; }
-      if (Math.abs(dx) > 8) isHorizontal.current = true;
-    }
-    if (isHorizontal.current && dx < 0 && !actionsOpen) {
-      setActivelySwiping(true);
-      setSwipeX(Math.max(dx, -100));
-    }
-  };
-
-  const onTouchEnd = () => {
-    cancelLongPress();
-    setActivelySwiping(false);
-    if (!didLongPress.current && swipeX < -60) doDelete();
-    else if (!didLongPress.current) setSwipeX(0);
-  };
-
-  const color = DOMAIN_COLOR[memory.domain] || DOMAIN_COLOR.general;
-  const swipeProgress = Math.min(Math.abs(swipeX) / 60, 1);
-
-  if (leaving) return <div style={{ maxHeight: 0, opacity: 0, overflow: "hidden", transition: "all 0.25s" }} />;
-
-  return (
-    <div className="relative overflow-hidden" style={{ marginBottom: 1 }}>
-      {/* Swipe bg */}
-      <div
-        className="absolute inset-0 flex items-center justify-end pr-5"
-        style={{ background: `rgba(255,59,48,${swipeProgress * 0.9})`, visibility: swipeX < -8 ? "visible" : "hidden" }}
-      >
-        <span className="text-white text-[11px] tracking-widest uppercase font-mono">elimina</span>
-      </div>
-
-      {/* Card */}
-      <div
-        className="relative group px-4 py-3"
-        style={{
-          background: actionsOpen ? "rgba(255,255,255,0.04)" : highlight ? "rgba(255,255,255,0.03)" : "transparent",
-          borderLeft: `2px solid ${actionsOpen ? "rgba(255,255,255,0.25)" : highlight ? color : "transparent"}`,
-          transform: `translateX(${swipeX}px)`,
-          transition: activelySwiping ? "none" : "transform 0.22s ease, background 0.15s",
-        }}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-      >
-        {/* Top row */}
-        <div className="flex items-center justify-between gap-2 mb-1.5">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span style={{ color, fontSize: 12 }}>{TYPE_ICONS[memory.type] || "○"}</span>
-            <span className="text-[10px] px-1.5 py-0.5" style={{ background: color + "22", color, border: `1px solid ${color}44` }}>
-              {memory.type}
-            </span>
-            <span className="text-[10px] px-1.5 py-0.5" style={{ background: "rgba(255,255,255,0.04)", color: "var(--fg-muted)", border: "1px solid var(--border)" }}>
-              {memory.domain}
-            </span>
-            {memory.usageCount > 0 && (
-              <span className="text-[10px]" style={{ color: "var(--fg-muted)" }}>· {memory.usageCount}×</span>
-            )}
-          </div>
-          <span className="text-[10px] shrink-0" style={{ color: "var(--fg-muted)" }}>
-            {relTime(memory.timestamp)}
-          </span>
-        </div>
-
-        {/* Content */}
-        <p className="text-sm leading-snug" style={{ color: "var(--accent)" }}>
-          {memory.content || memory.text}
-        </p>
-
-        {/* Entities */}
-        {memory.entities.length > 0 && (
-          <div className="flex gap-1 mt-1.5 flex-wrap">
-            {memory.entities.map((e, i) => (
-              <span key={i} className="text-[10px] px-1.5 py-0.5" style={{ background: "rgba(255,255,255,0.05)", color: "var(--fg-dim)" }}>
-                #{e}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* Action bar — long press (mobile) OR hover (desktop) */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateRows: actionsOpen ? "1fr" : "0fr",
-            transition: "grid-template-rows 0.2s ease",
-          }}
-          className="group-hover:[grid-template-rows:1fr]"
-        >
-          <div className="overflow-hidden">
-            <div className="flex gap-2 pt-2.5">
-              <button
-                onTouchEnd={(e) => { e.stopPropagation(); setActionsOpen(false); onEdit(memory); }}
-                onClick={() => { setActionsOpen(false); onEdit(memory); }}
-                className="flex-1 py-1.5 text-[11px] tracking-[0.12em] uppercase border transition-colors"
-                style={{ borderColor: "var(--border)", color: "var(--fg-muted)", background: "rgba(255,255,255,0.04)" }}
-              >
-                ✎ Modifica
-              </button>
-              <button
-                onTouchEnd={(e) => { e.stopPropagation(); doDelete(); }}
-                onClick={doDelete}
-                className="flex-1 py-1.5 text-[11px] tracking-[0.12em] uppercase border transition-colors"
-                style={{ borderColor: "var(--red)", color: "var(--red)", background: "rgba(255,59,48,0.08)" }}
-              >
-                ✕ Elimina
-              </button>
-              {actionsOpen && (
-                <button
-                  onTouchEnd={(e) => { e.stopPropagation(); setActionsOpen(false); }}
-                  onClick={() => setActionsOpen(false)}
-                  className="px-3 py-1.5 text-[11px] border"
-                  style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Duplicate Modal ──────────────────────────────────────────────────────────
-
-function DuplicateModal({
-  clusters,
-  memories,
-  onMerge,
-  onDeleteAll,
-  onClose,
-}: {
-  clusters: DuplicateCluster[];
-  memories: Memory[];
-  onMerge: (keep: string, del: string[]) => void;
-  onDeleteAll: (ids: string[]) => void;
-  onClose: () => void;
-}) {
-  const [done, setDone] = useState<Set<number>>(new Set());
-  const getM = (id: string) => memories.find((m) => m.id === id);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
-      style={{ background: "rgba(0,0,0,0.88)" }}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div
-        className="w-full max-w-lg mx-4 mb-4 sm:mb-0"
-        style={{ background: "#0a0a0a", border: "1px solid var(--border)", maxHeight: "80vh", display: "flex", flexDirection: "column" }}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1">
-              <div className="glyph-dot glyph-dot-red" />
-              <div className="glyph-dot glyph-dot-red" style={{ animationDelay: "0.25s" }} />
-            </div>
-            <span className="text-[11px] tracking-[0.2em] uppercase" style={{ color: "var(--accent)" }}>
-              {clusters.length} gruppi duplicati
-            </span>
-          </div>
-          <button onClick={onClose} className="text-lg leading-none" style={{ color: "var(--fg-muted)" }}>×</button>
-        </div>
-
-        <div className="overflow-y-auto flex-1">
-          {clusters.map((cluster, i) => (
-            <div
-              key={i}
-              className="px-5 py-4 border-b border-[var(--border)] transition-opacity"
-              style={{ opacity: done.has(i) ? 0.3 : 1 }}
-            >
-              <p className="text-[10px] tracking-[0.15em] uppercase mb-2" style={{ color: "var(--fg-muted)" }}>
-                Gruppo {i + 1} — {cluster.ids.length} simili
-              </p>
-              <div className="space-y-1.5 mb-3">
-                {cluster.ids.map((id) => {
-                  const m = getM(id);
-                  return m ? (
-                    <div
-                      key={id}
-                      className="px-3 py-2 text-xs leading-snug"
-                      style={{
-                        background: id === cluster.representative ? "rgba(255,255,255,0.06)" : "transparent",
-                        border: `1px solid ${id === cluster.representative ? "rgba(255,255,255,0.15)" : "var(--border)"}`,
-                        color: id === cluster.representative ? "var(--accent)" : "var(--fg-dim)",
-                      }}
-                    >
-                      {id === cluster.representative && (
-                        <span className="mr-2 text-[10px]" style={{ color: "var(--green)" }}>★</span>
-                      )}
-                      {m.content || m.text}
-                    </div>
-                  ) : null;
-                })}
-              </div>
-
-              {!done.has(i) && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      const del = cluster.ids.filter((id) => id !== cluster.representative);
-                      onMerge(cluster.representative, del);
-                      setDone((s) => new Set(s).add(i));
-                    }}
-                    className="text-[10px] tracking-[0.1em] uppercase px-3 py-1.5"
-                    style={{ background: "var(--fg)", color: "var(--bg)" }}
-                  >
-                    Merge
-                  </button>
-                  <button
-                    onClick={() => {
-                      onDeleteAll(cluster.ids);
-                      setDone((s) => new Set(s).add(i));
-                    }}
-                    className="text-[10px] tracking-[0.1em] uppercase px-3 py-1.5 border"
-                    style={{ borderColor: "var(--red)", color: "var(--red)" }}
-                  >
-                    Elimina tutte
-                  </button>
-                  <button
-                    onClick={() => setDone((s) => new Set(s).add(i))}
-                    className="text-[10px] tracking-[0.1em] uppercase px-3 py-1.5 border"
-                    style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
-                  >
-                    Ignora
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="px-5 py-3 border-t border-[var(--border)] shrink-0">
-          <button
-            onClick={onClose}
-            className="w-full text-[10px] tracking-[0.15em] uppercase py-1"
-            style={{ color: "var(--fg-muted)" }}
-          >
-            Chiudi
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+import { detectDuplicates, DuplicateCluster } from "@/lib/tfidf";
+import { Memory, SearchResult } from "@/components/types";
+import EditModal from "@/components/EditModal";
+import MemoryCard from "@/components/MemoryCard";
+import DuplicateModal from "@/components/DuplicateModal";
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
@@ -419,15 +13,21 @@ export default function Home() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [input, setInput] = useState("");
-  const [mode, setMode] = useState<"add" | "ask">("add");
+  const [mode, setMode] = useState<"add" | "search" | "calendar">("add");
   const [processing, setProcessing] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [askResult, setAskResult] = useState<AskResult | null>(null);
+  // Removed askResult state (unified search)
+  const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [totalTokens, setTotalTokens] = useState(0);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [dupClusters, setDupClusters] = useState<DuplicateCluster[]>([]);
   const [showDup, setShowDup] = useState(false);
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -442,7 +42,11 @@ export default function Home() {
       })
       .catch(() => setLoaded(true));
     const tok = localStorage.getItem("sb_tokens");
-    if (tok) setTotalTokens(parseInt(tok));
+    if (tok) {
+      setTimeout(() => {
+        setTotalTokens(parseInt(tok));
+      }, 0);
+    }
   }, []);
 
   useEffect(() => {
@@ -453,6 +57,19 @@ export default function Home() {
     setToast({ msg, ok });
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3000);
+  };
+
+  const toDateKey = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const parseTimeRef = (value?: string | null): Date | null => {
+    if (!value) return null;
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? null : dt;
   };
 
   // ── Add memory → save to SQLite ──
@@ -479,6 +96,8 @@ export default function Home() {
         entities: data.entities || [],
         timestamp: Date.now(),
         usageCount: 0,
+        timeRef: data.timeRef || null,
+        timeConfidence: data.timeConfidence || 0,
       };
       setMemories((prev) => [newMem, ...prev]);
       showToast(`${data.type} · ${data.domain}`);
@@ -489,47 +108,16 @@ export default function Home() {
     setProcessing(false);
   };
 
-  // ── Ask ──
-  const askQuestion = async () => {
-    if (!input.trim() || processing) return;
-    setProcessing(true);
-    setAskResult(null);
-    const question = input;
-    setInput("");
 
-    const ranked = rankByRelevance(question, memories.map((m) => ({ id: m.id, text: m.content || m.text })));
-    const topIds = ranked.slice(0, 10).filter((r) => r.score > 0.02).map((r) => r.id);
-    const relevant = memories.filter((m) => topIds.includes(m.id));
+  // askQuestion removed – unified under search mode
 
-    // Increment usageCount in SQLite (fire and forget)
-    topIds.forEach((id) => {
-      fetch("/api/items", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
-    });
-    setMemories((prev) => prev.map((m) => topIds.includes(m.id) ? { ...m, usageCount: m.usageCount + 1 } : m));
 
-    try {
-      const res = await fetch("/api/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question,
-          memories: relevant.map((m) => ({ id: m.id, text: m.content || m.text })),
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setTotalTokens((t) => t + (data.tokensUsed || 0));
-      setAskResult({ question, response: data.response, relevantIds: topIds });
-    } catch (e) {
-      showToast(`Errore: ${e instanceof Error ? e.message : "sconosciuto"}`, false);
-    }
-    setProcessing(false);
-  };
+
 
   // ── Delete → SQLite ──
   const deleteMemory = useCallback((id: string) => {
     setMemories((prev) => prev.filter((m) => m.id !== id));
-    setAskResult((prev) => prev ? { ...prev, relevantIds: prev.relevantIds.filter((r) => r !== id) } : null);
+    // removed askResult update
     fetch("/api/items", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
     showToast("Eliminata");
   }, []);
@@ -546,7 +134,16 @@ export default function Home() {
     setMemories((prev) =>
       prev.map((m) =>
         m.id === id
-          ? { ...m, text, content: data.content, type: data.type, domain: data.domain, entities: data.entities }
+          ? {
+              ...m,
+              text,
+              content: data.content,
+              type: data.type,
+              domain: data.domain,
+              entities: data.entities,
+              timeRef: data.timeRef || null,
+              timeConfidence: data.timeConfidence || 0,
+            }
           : m
       )
     );
@@ -604,9 +201,59 @@ export default function Home() {
 
   const stopRecording = () => { mediaRecorderRef.current?.stop(); setRecording(false); };
 
-  const handleSubmit = () => mode === "add" ? addMemory() : askQuestion();
+  const executeSearch = async () => {
+    if (!input.trim() || processing) return;
+    setProcessing(true);
+    setSearchResult(null);
+    const query = input;
+    setInput("");
+    try {
+      const res = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setSearchResult(data);
+    } catch (e) {
+      showToast(`Errore: ${e instanceof Error ? e.message : "sconosciuto"}`, false);
+    }
+    setProcessing(false);
+  };
 
-  const relevantMems = askResult ? memories.filter((m) => askResult.relevantIds.includes(m.id)) : [];
+  const selectMode = (m: "add" | "search" | "calendar") => {
+    setMode(m);
+    setSearchResult(null);
+  };
+
+  const handleSubmit = () => {
+    if (mode === "add") addMemory();
+    else if (mode === "search") executeSearch();
+  };
+
+  const datedMemories = memories
+    .map((m) => {
+      const dt = parseTimeRef(m.timeRef);
+      return dt ? { memory: m, date: dt, key: toDateKey(dt) } : null;
+    })
+    .filter((x): x is { memory: Memory; date: Date; key: string } => x !== null);
+
+  const calendarCounts = datedMemories.reduce<Record<string, number>>((acc, item) => {
+    acc[item.key] = (acc[item.key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const monthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+  const monthEnd = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0);
+  const firstWeekday = monthStart.getDay();
+  const daysInMonth = monthEnd.getDate();
+
+  const selectedDayMemories = selectedDateKey
+    ? datedMemories.filter((item) => item.key === selectedDateKey).map((item) => item.memory)
+    : [];
+
+  // removed relevantMems (ask mode eliminated)
 
   return (
     <div className="dot-grid flex flex-col" style={{ height: "100dvh", overflow: "hidden" }}>
@@ -638,10 +285,10 @@ export default function Home() {
 
           {/* Mode selector */}
           <div className="flex gap-1">
-            {(["add", "ask"] as const).map((m) => (
+            {(["add", "search", "calendar"] as const).map((m) => (
               <button
                 key={m}
-                onClick={() => setMode(m)}
+                onClick={() => selectMode(m)}
                 className="text-[10px] tracking-[0.15em] uppercase px-3 py-1 transition-all"
                 style={{
                   background: mode === m ? "var(--fg)" : "transparent",
@@ -649,18 +296,22 @@ export default function Home() {
                   border: mode === m ? "1px solid var(--fg)" : "1px solid var(--border)",
                 }}
               >
-                {m === "add" ? "+ Aggiungi" : "? Domanda"}
+                {m === "add" ? "+ Aggiungi" : m === "search" ? "🔍 Cerca" : "📅 Calendar"}
               </button>
             ))}
           </div>
 
           {/* Input row */}
-          <div className="flex gap-2">
+          {mode !== "calendar" && <div className="flex gap-2">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit(); }}
-              placeholder={mode === "add" ? "Scrivi o detta qualcosa da ricordare..." : "Fai una domanda alle tue memorie..."}
+              placeholder={
+                mode === "add"
+                  ? "Scrivi o detta qualcosa da ricordare..."
+                  : "Fai una domanda alle tue memorie o cerca..."
+              }
               rows={2}
               className="flex-1 resize-none text-sm focus:outline-none transition-colors"
               style={{
@@ -704,17 +355,18 @@ export default function Home() {
                 </svg>
               </button>
             </div>
-          </div>
+          </div>}
 
           {/* Submit */}
-          <button
+          {mode !== "calendar" && <button
             onClick={handleSubmit}
             disabled={processing || !input.trim()}
             className="w-full py-2 text-[11px] tracking-[0.15em] uppercase transition-all disabled:opacity-25"
             style={{ background: "var(--fg)", color: "var(--bg)" }}
           >
-            {processing ? "..." : mode === "add" ? "Salva memoria  ⌘↵" : "Chiedi  ⌘↵"}
-          </button>
+            {processing ? "..." : mode === "add" ? "Salva memoria  ⌘↵" : "Cerca  ⌘↵"}
+
+          </button>}
         </div>
       </header>
 
@@ -722,15 +374,16 @@ export default function Home() {
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto">
 
-          {/* Ask result block */}
-          {askResult && (
-            <div className="fade-in border-b border-[var(--border)] px-4 py-4 space-y-3">
+
+          {/* Search result block */}
+          {mode !== "calendar" && searchResult && (
+            <div className="fade-in border-b border-[var(--border)] px-4 py-4 space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] tracking-[0.15em] uppercase" style={{ color: "var(--fg-muted)" }}>
-                  ◎ risposta
+                  🔍 RISERCA SEMANTICA
                 </p>
                 <button
-                  onClick={() => setAskResult(null)}
+                  onClick={() => setSearchResult(null)}
                   className="text-[10px] tracking-wider uppercase"
                   style={{ color: "var(--fg-muted)" }}
                 >
@@ -738,37 +391,134 @@ export default function Home() {
                 </button>
               </div>
 
-              <div
-                className="px-4 py-3 text-sm leading-relaxed"
-                style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--accent)" }}
-              >
-                <p className="text-[10px] mb-2 italic" style={{ color: "var(--fg-dim)" }}>
-                  «{askResult.question}»
-                </p>
-                {askResult.response}
-              </div>
-
-              {relevantMems.length > 0 && (
-                <div>
-                  <p className="text-[10px] tracking-[0.12em] uppercase mb-1 px-1" style={{ color: "var(--fg-muted)" }}>
-                    Memorie usate ({relevantMems.length})
-                  </p>
-                  {relevantMems.map((m) => (
-                    <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} highlight />
-                  ))}
+              {searchResult.response && (
+                <div
+                  className="px-4 py-3 text-sm leading-relaxed"
+                  style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)", color: "var(--accent)" }}
+                >
+                  {searchResult.response}
                 </div>
               )}
+
+              {searchResult.clusters && searchResult.clusters.length > 0 ? (
+                <div className="space-y-4">
+                  {searchResult.clusters.map((cluster, idx) => {
+                    const clusterMems = memories.filter((m) => cluster.items.includes(m.id));
+                    if (clusterMems.length === 0) return null;
+                    return (
+                      <div key={idx} className="space-y-1">
+                        <div className="flex items-center gap-1.5 px-1">
+                          <span className="text-xs">{cluster.emoji}</span>
+                          <span className="text-[10px] tracking-[0.12em] uppercase font-mono" style={{ color: "var(--accent)" }}>
+                            {cluster.topic} ({clusterMems.length})
+                          </span>
+                        </div>
+                        <div className="space-y-0.5">
+                          {clusterMems.map((m) => (
+                            <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} highlight />
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs italic text-center py-2" style={{ color: "var(--fg-dim)" }}>
+                  Nessun risultato rilevante trovato.
+                </p>
+              )}
+            </div>
+          )}
+          {/* Calendar view */}
+          {mode === "calendar" && loaded && (
+            <div className="pt-3 pb-4 px-3 space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <button
+                  onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
+                  className="px-2 py-1 text-[10px] uppercase border"
+                  style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
+                >
+                  ← mese
+                </button>
+                <span className="text-[11px] tracking-[0.12em] uppercase" style={{ color: "var(--accent)" }}>
+                  {calendarMonth.toLocaleDateString("it-IT", { month: "long", year: "numeric" })}
+                </span>
+                <button
+                  onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
+                  className="px-2 py-1 text-[10px] uppercase border"
+                  style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
+                >
+                  mese →
+                </button>
+              </div>
+
+              <div className="grid grid-cols-7 gap-1 px-1">
+                {["Dom", "Lun", "Mar", "Mer", "Gio", "Ven", "Sab"].map((label) => (
+                  <div key={label} className="text-center text-[10px] uppercase" style={{ color: "var(--fg-muted)" }}>
+                    {label}
+                  </div>
+                ))}
+
+                {Array.from({ length: firstWeekday }).map((_, idx) => (
+                  <div key={`empty-${idx}`} />
+                ))}
+
+                {Array.from({ length: daysInMonth }).map((_, idx) => {
+                  const day = idx + 1;
+                  const date = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
+                  const key = toDateKey(date);
+                  const count = calendarCounts[key] || 0;
+                  const selected = selectedDateKey === key;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => setSelectedDateKey(key)}
+                      className="min-h-12 p-1 border text-left transition-colors"
+                      style={{
+                        borderColor: selected ? "var(--fg)" : "var(--border)",
+                        background: count > 0 ? "rgba(255,255,255,0.04)" : "transparent",
+                        color: selected ? "var(--fg)" : "var(--accent)",
+                      }}
+                    >
+                      <div className="text-[11px]">{day}</div>
+                      {count > 0 && (
+                        <div className="text-[10px]" style={{ color: "var(--green)" }}>
+                          {count} nota{count > 1 ? "e" : ""}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="border border-[var(--border)] p-3">
+                {!selectedDateKey ? (
+                  <p className="text-xs" style={{ color: "var(--fg-muted)" }}>
+                    Seleziona un giorno per vedere le note con data.
+                  </p>
+                ) : selectedDayMemories.length === 0 ? (
+                  <p className="text-xs" style={{ color: "var(--fg-muted)" }}>
+                    Nessuna nota con data in questo giorno.
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {selectedDayMemories.map((m) => (
+                      <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} />
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
           {/* Memory list */}
-          {!loaded ? (
+          {mode !== "calendar" && !loaded ? (
             <div className="flex justify-center gap-2 py-16">
               <div className="glyph-dot" />
               <div className="glyph-dot" style={{ animationDelay: "0.4s" }} />
               <div className="glyph-dot" style={{ animationDelay: "0.8s" }} />
             </div>
-          ) : memories.length === 0 ? (
+          ) : mode !== "calendar" && memories.length === 0 ? (
             <div className="text-center py-20 space-y-3">
               <div className="flex justify-center gap-2">
                 <div className="glyph-dot" />
@@ -779,13 +529,13 @@ export default function Home() {
                 Nessuna memoria. Inizia scrivendo qualcosa.
               </p>
             </div>
-          ) : (
+          ) : mode !== "calendar" ? (
             <div className="pt-2 pb-4">
               {memories.map((m) => (
                 <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} />
               ))}
             </div>
-          )}
+          ) : null}
         </div>
       </main>
 

@@ -1,0 +1,255 @@
+"use client";
+
+import { useState, useRef, useCallback } from "react";
+import { Memory } from "./types";
+
+const TYPE_ICONS: Record<string, string> = {
+  note: "○",
+  task: "◇",
+  wishlist: "☆",
+  idea: "◈",
+  reminder: "◎",
+};
+
+const DOMAIN_COLOR: Record<string, string> = {
+  food: "#ff9f43",
+  travel: "#54a0ff",
+  work: "#a29bfe",
+  health: "#00cec9",
+  cinema: "#fd79a8",
+  tech: "#74b9ff",
+  music: "#b2bec3",
+  learning: "#55efc4",
+  shopping: "#fdcb6e",
+  finance: "#ff7675",
+  pets: "#81ecec",
+  general: "#636e72",
+};
+
+function relTime(ts: number): string {
+  const d = Date.now() - ts;
+  if (d < 60000) return "adesso";
+  if (d < 3600000) return `${Math.floor(d / 60000)}min fa`;
+  if (d < 86400000) return `${Math.floor(d / 3600000)}h fa`;
+  if (d < 604800000) return `${Math.floor(d / 86400000)}g fa`;
+  return new Date(ts).toLocaleDateString("it-IT", { day: "2-digit", month: "short" });
+}
+
+export default function MemoryCard({
+  memory,
+  onDelete,
+  onEdit,
+  highlight = false,
+}: {
+  memory: Memory;
+  onDelete: (id: string) => void;
+  onEdit: (memory: Memory) => void;
+  highlight?: boolean;
+}) {
+  const [swipeX, setSwipeX] = useState(0);
+  const [activelySwiping, setActivelySwiping] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const touchStart = useRef({ x: 0, y: 0 });
+  const isHorizontal = useRef(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didLongPress = useRef(false);
+
+  const doDelete = useCallback(() => {
+    setActionsOpen(false);
+    setLeaving(true);
+    setTimeout(() => onDelete(memory.id), 250);
+  }, [memory.id, onDelete]);
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (!isTouchDevice) setIsTouchDevice(true);
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    isHorizontal.current = false;
+    didLongPress.current = false;
+
+    longPressTimer.current = setTimeout(() => {
+      didLongPress.current = true;
+      setActionsOpen(true);
+      setSwipeX(0);
+      if (navigator.vibrate) navigator.vibrate(12);
+    }, 450);
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    const dx = e.touches[0].clientX - touchStart.current.x;
+    const dy = e.touches[0].clientY - touchStart.current.y;
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) cancelLongPress();
+    if (!isHorizontal.current) {
+      if (Math.abs(dy) > Math.abs(dx) + 5) {
+        setActivelySwiping(false);
+        return;
+      }
+      if (Math.abs(dx) > 8) isHorizontal.current = true;
+    }
+    if (isHorizontal.current && dx < 0 && !actionsOpen) {
+      setActivelySwiping(true);
+      setSwipeX(Math.max(dx, -100));
+    }
+  };
+
+  const onTouchEnd = () => {
+    cancelLongPress();
+    setActivelySwiping(false);
+    if (!didLongPress.current && swipeX < -60) doDelete();
+    else if (!didLongPress.current) setSwipeX(0);
+  };
+
+  const showActions = actionsOpen || (!isTouchDevice && hovered);
+  const color = DOMAIN_COLOR[memory.domain] || DOMAIN_COLOR.general;
+  const swipeProgress = Math.min(Math.abs(swipeX) / 60, 1);
+
+  if (leaving) return <div style={{ maxHeight: 0, opacity: 0, overflow: "hidden", transition: "all 0.25s" }} />;
+
+  return (
+    <div className="relative overflow-hidden" style={{ marginBottom: 1 }}>
+      {/* Swipe bg */}
+      <div
+        className="absolute inset-0 flex items-center justify-end pr-5"
+        style={{
+          background: `rgba(255,59,48,${swipeProgress * 0.9})`,
+          visibility: swipeX < -8 ? "visible" : "hidden",
+        }}
+      >
+        <span className="text-white text-[11px] tracking-widest uppercase font-mono">elimina</span>
+      </div>
+
+      {/* Card */}
+      <div
+        className="relative px-4 py-3"
+        style={{
+          background: showActions
+            ? "rgba(255,255,255,0.04)"
+            : highlight
+            ? "rgba(255,255,255,0.03)"
+            : "transparent",
+          borderLeft: `2px solid ${showActions ? "rgba(255,255,255,0.2)" : highlight ? color : "transparent"}`,
+          transform: `translateX(${swipeX}px)`,
+          transition: activelySwiping ? "none" : "transform 0.22s ease, background 0.15s, border-color 0.15s",
+        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
+        {/* Top row */}
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span style={{ color, fontSize: 12 }}>{TYPE_ICONS[memory.type] || "○"}</span>
+            <span
+              className="text-[10px] px-1.5 py-0.5"
+              style={{ background: color + "22", color, border: `1px solid ${color}44` }}
+            >
+              {memory.type}
+            </span>
+            <span
+              className="text-[10px] px-1.5 py-0.5"
+              style={{
+                background: "rgba(255,255,255,0.04)",
+                color: "var(--fg-muted)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              {memory.domain}
+            </span>
+            {memory.usageCount > 0 && (
+              <span className="text-[10px]" style={{ color: "var(--fg-muted)" }}>
+                · {memory.usageCount}×
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] shrink-0" style={{ color: "var(--fg-muted)" }}>
+            {relTime(memory.timestamp)}
+          </span>
+        </div>
+
+        {/* Content */}
+        <p className="text-sm leading-snug" style={{ color: "var(--accent)" }}>
+          {memory.content || memory.text}
+        </p>
+
+        {/* Entities */}
+        {memory.entities.length > 0 && (
+          <div className="flex gap-1 mt-1.5 flex-wrap">
+            {memory.entities.map((e, i) => (
+              <span
+                key={i}
+                className="text-[10px] px-1.5 py-0.5"
+                style={{ background: "rgba(255,255,255,0.05)", color: "var(--fg-dim)" }}
+              >
+                #{e}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Action bar — slides in on hover (desktop) or long press (mobile) */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateRows: showActions ? "1fr" : "0fr",
+            transition: "grid-template-rows 0.2s ease",
+          }}
+        >
+          <div className="overflow-hidden">
+            <div className="flex gap-2 pt-2.5">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActionsOpen(false);
+                  onEdit(memory);
+                }}
+                className="flex-1 py-1.5 text-[11px] tracking-[0.12em] uppercase border transition-colors"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--fg-muted)",
+                  background: "rgba(255,255,255,0.04)",
+                }}
+              >
+                ✎ Modifica
+              </button>
+              <button
+                onTouchEnd={(e) => {
+                  e.stopPropagation();
+                  doDelete();
+                }}
+                onClick={doDelete}
+                className="flex-1 py-1.5 text-[11px] tracking-[0.12em] uppercase border transition-colors"
+                style={{ borderColor: "var(--red)", color: "var(--red)", background: "rgba(255,59,48,0.08)" }}
+              >
+                ✕ Elimina
+              </button>
+              {actionsOpen && (
+                <button
+                  onTouchEnd={(e) => {
+                    e.stopPropagation();
+                    setActionsOpen(false);
+                  }}
+                  onClick={() => setActionsOpen(false)}
+                  className="px-3 py-1.5 text-[11px] border"
+                  style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

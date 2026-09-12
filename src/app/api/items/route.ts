@@ -10,6 +10,8 @@ export async function GET() {
       raw_text: string;
       type: string;
       domain: string;
+      time_ref: string | null;
+      time_confidence: number | null;
       created_at: string;
       entity_list: string | null;
       usage_count: number;
@@ -26,6 +28,8 @@ export async function GET() {
         : [],
       timestamp: new Date(r.created_at).getTime(),
       usageCount: r.usage_count || 0,
+      timeRef: r.time_ref,
+      timeConfidence: r.time_confidence || 0,
     }));
 
     return NextResponse.json({ items });
@@ -90,6 +94,8 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({
       id, content: parsed.summary, text,
       type: parsed.type, domain: parsed.domain, entities: entityNames,
+      timeRef: parsed.time.datetime || null,
+      timeConfidence: parsed.time.confidence,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
