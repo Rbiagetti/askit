@@ -1,4 +1,5 @@
 import Groq from "groq-sdk";
+import { temporalContext, describeWhen } from "./temporal";
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -35,22 +36,6 @@ Rules:
 - Keep summary concise and in the original language
 - If unsure about type, default to "note"
 - Never add entities that aren't clearly referenced`;
-
-const TIMEZONE = process.env.SB_TIMEZONE || "Europe/Rome";
-
-/** Temporal context prepended to the input, so relative dates are resolvable. */
-function temporalContext(now: Date): string {
-  const weekday = new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    timeZone: TIMEZONE,
-  }).format(now);
-  const local = new Intl.DateTimeFormat("sv-SE", {
-    dateStyle: "short",
-    timeStyle: "short",
-    timeZone: TIMEZONE,
-  }).format(now);
-  return `Current datetime: ${local} (${weekday}, timezone ${TIMEZONE})\nISO: ${now.toISOString()}`;
-}
 
 export async function parseMemory(text: string, now: Date = new Date()): Promise<ParsedMemory> {
   const completion = await groq.chat.completions.create({
@@ -105,14 +90,32 @@ Rules:
 - Group logically
 - Keep the response natural and helpful
 - The response should reference actual content, not fabricate
-- If nothing is relevant, say so honestly`;
+- If nothing is relevant, say so honestly
+- Each memory may carry a "when:" field already marked PASSATO or FUTURO relative to
+  the current datetime. TRUST those labels — never re-derive whether a date is past or
+  future from the text, and never call a PASSATO event upcoming.`;
 
 export async function searchWithLLM(
   query: string,
-  items: Array<{ id: string; content: string; type: string; domain: string; entities: string }>
+  items: Array<{
+    id: string;
+    content: string;
+    type: string;
+    domain: string;
+    entities: string;
+    timeRef?: string | null;
+  }>,
+  now: Date = new Date()
 ) {
   const itemList = items
-    .map((i) => `[${i.id}] (${i.type}/${i.domain}) ${i.content} | entities: ${i.entities || "none"}`)
+    .map((i) => {
+      const when = describeWhen(i.timeRef, now);
+      return (
+        `[${i.id}] (${i.type}/${i.domain}) ${i.content}` +
+        ` | entities: ${i.entities || "none"}` +
+        (when ? ` | when: ${when}` : "")
+      );
+    })
     .join("\n");
 
   const completion = await groq.chat.completions.create({
@@ -121,7 +124,7 @@ export async function searchWithLLM(
       { role: "system", content: SEARCH_SYSTEM },
       {
         role: "user",
-        content: `Query: "${query}"\n\nStored memories:\n${itemList}`,
+        content: `${temporalContext(now)}\n\nQuery: "${query}"\n\nStored memories:\n${itemList}`,
       },
     ],
     temperature: 0.2,

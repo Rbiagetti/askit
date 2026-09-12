@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
         type: i.type,
         domain: i.domain || "",
         entities: i.entities,
+        timeRef: i.timeRef,
       }))
     );
 

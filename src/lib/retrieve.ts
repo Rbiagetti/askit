@@ -23,6 +23,7 @@ export interface RetrievedItem {
   domain: string | null;
   entities: string;
   created_at: string;
+  timeRef: string | null;
   score: number;
   /** Which generators found this item, and at what rank. Useful when a result surprises. */
   provenance: Partial<Record<Source, number>>;
@@ -221,7 +222,7 @@ export async function retrieve(
   const placeholders = ranked.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT i.id, i.content, i.raw_text, i.type, i.domain, i.created_at,
+      `SELECT i.id, i.content, i.raw_text, i.type, i.domain, i.created_at, i.time_ref,
               GROUP_CONCAT(DISTINCT e.name) AS entity_list
        FROM items i
        LEFT JOIN item_entities ie ON i.id = ie.item_id
@@ -236,6 +237,7 @@ export async function retrieve(
     type: string;
     domain: string | null;
     created_at: string;
+    time_ref: string | null;
     entity_list: string | null;
   }>;
 
@@ -252,6 +254,7 @@ export async function retrieve(
         domain: row.domain,
         entities: row.entity_list || "",
         created_at: row.created_at,
+        timeRef: row.time_ref,
         score: meta.score,
         provenance: meta.provenance,
       };
