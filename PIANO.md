@@ -59,6 +59,102 @@ che la logica di routing stessa è corretta; il limite è nella classificazione,
 codice. Non corretto in questa sessione — richiede una decisione di prodotto su come
 trattare l'ambiguità, non un fix tecnico.
 
+## 9. Migrazione a Turso + deploy Vercel (host cloud gratuito)
+
+**Stato: in corso** (branch `feat/turso-migration`, un agente in background) ·
+Data: 12 settembre 2026
+
+### 9.1 Perché
+
+L'utente vuole usare l'app dal telefono **senza dipendere da un computer sempre acceso**.
+Tre strade erano sul tavolo (Raspberry Pi, hosting cloud a pagamento, hosting cloud gratuito) —
+scelta: **hosting cloud gratuito (Vercel + Turso)**, accettando il costo in lavoro di
+migrazione a fronte di zero costo ricorrente.
+
+Un tentativo intermedio con **Tailscale** (rete privata Mac↔iPhone + `tailscale serve` per
+avere HTTPS, necessario perché iOS blocca `getUserMedia` fuori da un contesto sicuro) ha
+funzionato per la connettività ma si è rivelato inutilizzabile in pratica: l'app restava
+bloccata sul telefono con i tab non responsivi, sintomo compatibile con un problema di
+streaming React Server Components attraverso il proxy di `tailscale serve` (non
+diagnosticato a fondo, abbandonato in favore della soluzione definitiva). Tailscale è stato
+disinstallato.
+
+### 9.2 Perché è un refactor vero, non un cambio di configurazione
+
+`better-sqlite3` (in uso da inizio progetto) è **sincrono**: ogni query blocca finché non
+risponde, perché il file è locale. Turso è un DB remoto — ogni query è per forza una
+chiamata di rete, quindi **asincrona**. Questo obbliga a convertire da sincrono ad asincrono
+l'intero strato dati: `lib/db.ts`, `lib/graph.ts`, `lib/retrieve.ts`, `lib/markdown.ts`, e le
+8 route API che li usano (`parse`, `items` con tutti i verbi, `items/[id]`, `search`, `tree`,
+`reindex`, `reanalyze`, `vault`). Non è opzionale: non esiste un modo di parlare con Turso
+in modo sincrono.
+
+### 9.3 Design: un solo client per locale e remoto
+
+Per non forzare Turso anche sullo sviluppo locale (o su un eventuale Raspberry Pi futuro),
+il client si sceglie in base alle variabili d'ambiente:
+
+```ts
+const url = process.env.TURSO_DATABASE_URL || `file:${DB_PATH}`;
+const client = createClient({
+  url,
+  authToken: process.env.TURSO_AUTH_TOKEN, // ignorato per url "file:"
+  intMode: "number",
+});
+```
+
+Senza le variabili `TURSO_*` impostate, il comportamento resta **identico a oggi** (stesso
+file `secondbrain.db`, via `@libsql/client` invece di `better-sqlite3` ma stesso risultato).
+Con le variabili impostate (solo su Vercel), si connette a Turso. Il refactor sync→async
+paga quindi una sola volta, indipendentemente da dove poi si decide di ospitare l'app.
+
+### 9.4 Cosa cambia concretamente
+
+- `getDb()` diventa asincrona e garantisce (con una Promise memoizzata) che le migrazioni
+  girino una sola volta anche con richieste concorrenti
+- `db.prepare(sql).all(...)` / `.get(...)` / `.run(...)` → `await client.execute({sql, args})`,
+  risultato in `.rows` (accesso sia per indice che per nome colonna)
+- `db.transaction(() => {...})()` → array di statement costruito dinamicamente + `client.batch(arr, "write")`
+- `db.exec(sqlMultiStatement)` → `client.executeMultiple(...)` per i blocchi CREATE TABLE,
+  loop di singole `execute()` guardate per gli ALTER TABLE (stesso pattern try/catch di oggi)
+- `db.pragma("user_version", ...)` non esiste in libsql → `PRAGMA user_version` letto/scritto
+  via `execute()` normale
+
+### 9.5 Punti di rischio
+
+- **FTS5 su Turso**: da verificare che il supporto sia completo. Il codice ha già un
+  try/catch attorno a `lexicalMatches()` (Fase 4) che degrada a 0 risultati FTS senza
+  rompere gli altri 3 generatori del retrieval — questa resilienza deve sopravvivere
+  identica nella versione async.
+- **Cold start serverless per l'embedding locale**: il modello `multilingual-e5-small`
+  (~120MB, Fase 2) su una funzione Vercel che riparte a freddo rischia di dover essere
+  riscaricato spesso. Mitigazione valutata: bundlare il modello nel deploy invece di
+  scaricarlo a runtime (`env.localModelPath` + `env.allowRemoteModels = false` di
+  transformers.js). Non bloccante per il merge del refactor, ma da chiudere prima del
+  deploy reale se la latenza risulta un problema.
+
+### 9.6 Cosa serve dall'utente (non delegabile)
+
+- Creare l'account Turso e il database (richiede login via browser, non automatizzabile):
+  ```bash
+  curl -sSfL https://get.tur.so/install.sh | bash
+  turso auth login
+  turso db create secondbrain
+  turso db show secondbrain --url        # -> TURSO_DATABASE_URL
+  turso db tokens create secondbrain     # -> TURSO_AUTH_TOKEN
+  ```
+  Le due variabili vanno aggiunte a `.env.local` in locale e alle variabili d'ambiente
+  del progetto Vercel per il deploy — sono credenziali, non passano per la chat.
+- Account Vercel (probabilmente già collegato a questa sessione via MCP) per il deploy vero.
+
+### 9.7 Verifica prevista
+
+Il refactor va provato **in locale senza credenziali Turso** (modalità file, vedi §9.3) come
+prova che l'astrazione funziona; il collaudo contro Turso vero avviene solo quando le
+credenziali sono disponibili, prima del deploy su Vercel. Criterio di accettazione: l'intero
+ciclo (creare nota → comparire in lista → trovarla in ricerca → modificarne il dominio →
+cancellarla) deve produrre lo stesso risultato di oggi, in entrambe le modalità.
+
 ---
 
 ## 1. Stato attuale verificato
