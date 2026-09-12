@@ -1,3 +1,5 @@
+import { cosineSimilarity } from "./vector";
+
 export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
@@ -28,29 +30,6 @@ function computeVector(text: string, vocab: Map<string, number>): number[] {
     if (idx !== undefined) vec[idx] = count / tokens.length;
   }
   return vec;
-}
-
-export function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, magA = 0, magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
-}
-
-export function rankByRelevance(
-  query: string,
-  memories: Array<{ id: string; text: string }>
-): Array<{ id: string; score: number }> {
-  if (memories.length === 0) return [];
-  const vocab = buildVocabulary([query, ...memories.map((m) => m.text)]);
-  const queryVec = computeVector(query, vocab);
-  return memories
-    .map((m) => ({ id: m.id, score: cosineSimilarity(queryVec, computeVector(m.text, vocab)) }))
-    .sort((a, b) => b.score - a.score);
 }
 
 export interface DuplicateCluster {

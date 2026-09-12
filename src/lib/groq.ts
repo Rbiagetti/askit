@@ -35,7 +35,7 @@ Rules:
 
 export async function parseMemory(text: string): Promise<ParsedMemory> {
   const completion = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
+    model: "qwen/qwen3.6-27b",
     messages: [
       { role: "system", content: PARSE_SYSTEM },
       { role: "user", content: text },
@@ -43,6 +43,7 @@ export async function parseMemory(text: string): Promise<ParsedMemory> {
     temperature: 0.1,
     max_tokens: 1000,
     response_format: { type: "json_object" },
+    reasoning_effort: "none",
   });
 
   const raw = completion.choices[0]?.message?.content || "{}";
@@ -93,7 +94,7 @@ export async function searchWithLLM(
     .join("\n");
 
   const completion = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
+    model: "qwen/qwen3.6-27b",
     messages: [
       { role: "system", content: SEARCH_SYSTEM },
       {
@@ -104,6 +105,7 @@ export async function searchWithLLM(
     temperature: 0.2,
     max_tokens: 2000,
     response_format: { type: "json_object" },
+    reasoning_effort: "none",
   });
 
   const raw = completion.choices[0]?.message?.content || "{}";
@@ -123,7 +125,7 @@ export async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
 
 export async function getEmbedding(text: string): Promise<number[]> {
   const completion = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
+    model: "qwen/qwen3.6-27b",
     messages: [
       {
         role: "system",
@@ -135,6 +137,7 @@ export async function getEmbedding(text: string): Promise<number[]> {
     temperature: 0,
     max_tokens: 500,
     response_format: { type: "json_object" },
+    reasoning_effort: "none",
   });
 
   const raw = completion.choices[0]?.message?.content || "[]";
@@ -146,16 +149,4 @@ export async function getEmbedding(text: string): Promise<number[]> {
     // fallback
   }
   return Array.from({ length: 64 }, () => Math.random() * 2 - 1);
-}
-
-export function cosineSimilarity(a: number[], b: number[]): number {
-  const len = Math.min(a.length, b.length);
-  let dot = 0, magA = 0, magB = 0;
-  for (let i = 0; i < len; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
 }

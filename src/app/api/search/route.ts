@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchWithLLM, getEmbedding, cosineSimilarity } from "@/lib/groq";
+import { searchWithLLM, getEmbedding } from "@/lib/groq";
+import { cosineSimilarity } from "@/lib/vector";
 import { getAllItems, getAllEmbeddings } from "@/lib/db";
 
 export async function POST(req: NextRequest) {

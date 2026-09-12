@@ -184,20 +184,6 @@ export function getAllEmbeddings() {
   }>;
 }
 
-export function getItemById(id: string) {
-  const db = getDb();
-  const item = db.prepare("SELECT * FROM items WHERE id = ?").get(id);
-  const entities = db.prepare(`
-    SELECT e.* FROM entities e
-    JOIN item_entities ie ON e.id = ie.entity_id
-    WHERE ie.item_id = ?
-  `).all(id);
-  const edges = db.prepare(`
-    SELECT * FROM edges WHERE source_id = ? OR target_id = ?
-  `).all(id, id);
-  return { item, entities, edges };
-}
-
 export function deleteItem(id: string) {
   const db = getDb();
   db.prepare("DELETE FROM embeddings WHERE owner_id = ?").run(id);
@@ -205,16 +191,3 @@ export function deleteItem(id: string) {
   db.prepare("DELETE FROM items WHERE id = ?").run(id);
 }
 
-export function getRelatedItems(itemId: string) {
-  const db = getDb();
-  return db.prepare(`
-    SELECT DISTINCT i.*, e.edge_type, e.weight
-    FROM edges e
-    JOIN items i ON (
-      (e.target_id = i.id AND e.source_id = ?) OR
-      (e.source_id = i.id AND e.target_id = ?)
-    )
-    WHERE i.id != ?
-    ORDER BY e.weight DESC
-  `).all(itemId, itemId, itemId);
-}
