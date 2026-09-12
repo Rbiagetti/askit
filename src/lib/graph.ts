@@ -15,33 +15,33 @@ import { cosineSimilarity } from "./vector";
 import { EMBED_MODEL } from "./embed";
 
 /** Shared-entity edges. Two items linked when they mention ≥2 entities in common. */
-export function linkCoOccurring(itemId: string, minShared = 2): number {
-  const db = getDb();
-  const partners = db
-    .prepare(
-      `SELECT ie2.item_id AS other, COUNT(*) AS shared
-       FROM item_entities ie1
-       JOIN item_entities ie2
-         ON ie1.entity_id = ie2.entity_id AND ie2.item_id != ie1.item_id
-       WHERE ie1.item_id = ?
-       GROUP BY ie2.item_id
-       HAVING shared >= ?`
-    )
-    .all(itemId, minShared) as Array<{ other: string; shared: number }>;
+export async function linkCoOccurring(itemId: string, minShared = 2): Promise<number> {
+  const db = await getDb();
+  const rs = await db.execute({
+    sql: `SELECT ie2.item_id AS other, COUNT(*) AS shared
+          FROM item_entities ie1
+          JOIN item_entities ie2
+            ON ie1.entity_id = ie2.entity_id AND ie2.item_id != ie1.item_id
+          WHERE ie1.item_id = ?
+          GROUP BY ie2.item_id
+          HAVING shared >= ?`,
+    args: [itemId, minShared],
+  });
+  const partners = rs.rows as unknown as Array<{ other: string; shared: number }>;
 
-  const upsert = db.prepare(
-    `INSERT INTO edges (id, source_id, target_id, source_type, target_type, edge_type, weight)
-     VALUES (?, ?, ?, 'item', 'item', 'CO_OCCURS', ?)
-     ON CONFLICT(source_id, target_id, edge_type) DO UPDATE SET weight = excluded.weight`
-  );
-
-  db.transaction(() => {
-    for (const p of partners) {
+  if (partners.length > 0) {
+    const statements = partners.map((p) => {
       // one row per unordered pair, so the smaller id is always the source
       const [a, b] = itemId < p.other ? [itemId, p.other] : [p.other, itemId];
-      upsert.run(`${a}:${b}:CO_OCCURS`, a, b, p.shared);
-    }
-  })();
+      return {
+        sql: `INSERT INTO edges (id, source_id, target_id, source_type, target_type, edge_type, weight)
+              VALUES (?, ?, ?, 'item', 'item', 'CO_OCCURS', ?)
+              ON CONFLICT(source_id, target_id, edge_type) DO UPDATE SET weight = excluded.weight`,
+        args: [`${a}:${b}:CO_OCCURS`, a, b, p.shared],
+      };
+    });
+    await db.batch(statements, "write");
+  }
 
   return partners.length;
 }
@@ -58,9 +58,15 @@ const MIN_CORPUS_FOR_SIMILARITY = 5;
  * So we standardise against this item's own similarity distribution and keep
  * only genuine outliers. See PIANO.md Fase 3b.
  */
-export function linkSimilar(itemId: string, vector: number[], topK = 3, minZ = 1.5): number {
-  const db = getDb();
-  const others = getItemVectors(EMBED_MODEL).filter((v) => v.itemId !== itemId);
+export async function linkSimilar(
+  itemId: string,
+  vector: number[],
+  topK = 3,
+  minZ = 1.5
+): Promise<number> {
+  const db = await getDb();
+  const allVectors = await getItemVectors(EMBED_MODEL);
+  const others = allVectors.filter((v) => v.itemId !== itemId);
   if (others.length < MIN_CORPUS_FOR_SIMILARITY) return 0;
 
   const scored = others.map((o) => ({
@@ -80,38 +86,41 @@ export function linkSimilar(itemId: string, vector: number[], topK = 3, minZ = 1
     .sort((a, b) => b.z - a.z)
     .slice(0, topK);
 
-  const upsert = db.prepare(
-    `INSERT INTO edges (id, source_id, target_id, source_type, target_type, edge_type, weight)
-     VALUES (?, ?, ?, 'item', 'item', 'SIMILAR_TO', ?)
-     ON CONFLICT(source_id, target_id, edge_type) DO UPDATE SET weight = excluded.weight`
-  );
-
-  db.transaction(() => {
-    for (const w of winners) {
+  if (winners.length > 0) {
+    const statements = winners.map((w) => {
       const [a, b] = itemId < w.itemId ? [itemId, w.itemId] : [w.itemId, itemId];
-      upsert.run(`${a}:${b}:SIMILAR_TO`, a, b, Number(w.score.toFixed(4)));
-    }
-  })();
+      return {
+        sql: `INSERT INTO edges (id, source_id, target_id, source_type, target_type, edge_type, weight)
+              VALUES (?, ?, ?, 'item', 'item', 'SIMILAR_TO', ?)
+              ON CONFLICT(source_id, target_id, edge_type) DO UPDATE SET weight = excluded.weight`,
+        args: [`${a}:${b}:SIMILAR_TO`, a, b, Number(w.score.toFixed(4))],
+      };
+    });
+    await db.batch(statements, "write");
+  }
 
   return winners.length;
 }
 
 /** Removes the derived item↔item edges of an item, before recomputing them. */
-export function clearDerivedEdges(itemId: string) {
-  getDb()
-    .prepare(
-      `DELETE FROM edges
-       WHERE edge_type IN ('CO_OCCURS', 'SIMILAR_TO')
-         AND (source_id = ? OR target_id = ?)`
-    )
-    .run(itemId, itemId);
+export async function clearDerivedEdges(itemId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `DELETE FROM edges
+          WHERE edge_type IN ('CO_OCCURS', 'SIMILAR_TO')
+            AND (source_id = ? OR target_id = ?)`,
+    args: [itemId, itemId],
+  });
 }
 
 /** Recomputes every derived edge for an item. Called after each write. */
-export function rebuildItemEdges(itemId: string, vector: number[]) {
-  clearDerivedEdges(itemId);
-  const coOccurs = linkCoOccurring(itemId);
-  const similar = linkSimilar(itemId, vector);
+export async function rebuildItemEdges(
+  itemId: string,
+  vector: number[]
+): Promise<{ coOccurs: number; similar: number }> {
+  await clearDerivedEdges(itemId);
+  const coOccurs = await linkCoOccurring(itemId);
+  const similar = await linkSimilar(itemId, vector);
   return { coOccurs, similar };
 }
 
@@ -139,21 +148,23 @@ export function isReasonedLinkingEnabled(): boolean {
   return process.env.SB_REASONED_LINKING === "1";
 }
 
-export function saveReasonedEdges(itemId: string, edges: ReasonedEdge[]): number {
-  const db = getDb();
-  const upsert = db.prepare(
-    `INSERT INTO edges (id, source_id, target_id, source_type, target_type, edge_type, weight)
-     VALUES (?, ?, ?, 'item', 'item', ?, ?)
-     ON CONFLICT(source_id, target_id, edge_type) DO UPDATE SET weight = excluded.weight`
-  );
-  let written = 0;
-  db.transaction(() => {
-    for (const e of edges) {
-      if (!REASONED_TYPES.includes(e.type) || e.targetId === itemId) continue;
-      const [a, b] = itemId < e.targetId ? [itemId, e.targetId] : [e.targetId, itemId];
-      upsert.run(`${a}:${b}:${e.type}`, a, b, e.type, e.confidence);
-      written++;
-    }
-  })();
-  return written;
+export async function saveReasonedEdges(
+  itemId: string,
+  edges: ReasonedEdge[]
+): Promise<number> {
+  const db = await getDb();
+  const valid = edges.filter((e) => REASONED_TYPES.includes(e.type) && e.targetId !== itemId);
+  if (valid.length === 0) return 0;
+
+  const statements = valid.map((e) => {
+    const [a, b] = itemId < e.targetId ? [itemId, e.targetId] : [e.targetId, itemId];
+    return {
+      sql: `INSERT INTO edges (id, source_id, target_id, source_type, target_type, edge_type, weight)
+            VALUES (?, ?, ?, 'item', 'item', ?, ?)
+            ON CONFLICT(source_id, target_id, edge_type) DO UPDATE SET weight = excluded.weight`,
+      args: [`${a}:${b}:${e.type}`, a, b, e.type, e.confidence],
+    };
+  });
+  await db.batch(statements, "write");
+  return valid.length;
 }

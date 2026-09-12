@@ -1,24 +1,53 @@
-import Database from "better-sqlite3";
+import { createClient, type Client } from "@libsql/client";
 import path from "path";
 import { v4 as uuid } from "uuid";
 
 // Overridable so benchmarks and tests can run against a throwaway copy
 const DB_PATH = process.env.SB_DB_PATH || path.join(process.cwd(), "secondbrain.db");
 
-let _db: Database.Database | null = null;
+// Same client works against a local file and against remote Turso: with no
+// TURSO_* env vars set (local dev, and today's deploys) this resolves to
+// `file:<DB_PATH>` and behaves exactly like the previous better-sqlite3 setup.
+// On Vercel, setting TURSO_DATABASE_URL + TURSO_AUTH_TOKEN points the same
+// code at a remote Turso database — no branching logic needed anywhere else.
+const DB_URL = process.env.TURSO_DATABASE_URL || process.env.SB_DB_PATH_URL || `file:${DB_PATH}`;
 
-export function getDb(): Database.Database {
-  if (!_db) {
-    _db = new Database(DB_PATH);
-    _db.pragma("journal_mode = WAL");
-    _db.pragma("foreign_keys = ON");
-    migrate(_db);
+let _client: Client | null = null;
+// Memoized migration promise: guarantees migrate() runs exactly once even
+// when getDb() is called concurrently by multiple in-flight requests.
+let _migrated: Promise<void> | null = null;
+
+function client(): Client {
+  if (!_client) {
+    _client = createClient({
+      url: DB_URL,
+      authToken: process.env.TURSO_AUTH_TOKEN, // ignored for "file:" URLs
+      intMode: "number", // keeps the previous better-sqlite3 number semantics
+    });
   }
-  return _db;
+  return _client;
 }
 
-function migrate(db: Database.Database) {
-  db.exec(`
+export async function getDb(): Promise<Client> {
+  const c = client();
+  if (!_migrated) {
+    _migrated = migrate(c).catch((err) => {
+      // let the next caller retry instead of caching a permanent failure
+      _migrated = null;
+      throw err;
+    });
+  }
+  await _migrated;
+  return c;
+}
+
+async function migrate(c: Client): Promise<void> {
+  // PRAGMAs first: journal_mode/foreign_keys are per-connection, executeMultiple
+  // is fine for these since none of them return rows we need.
+  await c.executeMultiple(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
+
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       content TEXT NOT NULL,
@@ -119,7 +148,7 @@ function migrate(db: Database.Database) {
   ];
   for (const sql of migrations) {
     try {
-      db.exec(sql);
+      await c.execute(sql);
     } catch {
       // already applied
     }
@@ -130,19 +159,23 @@ function migrate(db: Database.Database) {
   // This cannot be detected by comparing counts: on an external-content FTS5 table
   // "SELECT COUNT(*) FROM items_fts" reads through to items, so index-empty and
   // index-full look identical. Use the schema version instead.
+  //
+  // PRAGMA user_version doesn't accept bound parameters, so SCHEMA_VERSION (an
+  // internal constant, never user input) is interpolated directly.
   const SCHEMA_VERSION = 1;
   try {
-    const current = db.pragma("user_version", { simple: true }) as number;
+    const versionRs = await c.execute("PRAGMA user_version");
+    const current = Number(versionRs.rows[0]?.user_version ?? 0);
     if (current < SCHEMA_VERSION) {
-      db.exec("INSERT INTO items_fts(items_fts) VALUES('rebuild')");
-      db.pragma(`user_version = ${SCHEMA_VERSION}`);
+      await c.execute("INSERT INTO items_fts(items_fts) VALUES('rebuild')");
+      await c.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     }
   } catch {
     // FTS5 unavailable in this SQLite build — retrieval degrades to the other generators
   }
 }
 
-export function createItem(data: {
+export async function createItem(data: {
   content: string;
   raw_text: string;
   type: string;
@@ -151,112 +184,145 @@ export function createItem(data: {
   importance?: number;
   time_ref?: string;
   time_confidence?: number;
-}) {
-  const db = getDb();
+}): Promise<string> {
+  const db = await getDb();
   const id = uuid();
-  db.prepare(`
-    INSERT INTO items (id, content, raw_text, type, domain, intent, importance, time_ref, time_confidence)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id,
-    data.content,
-    data.raw_text,
-    data.type,
-    data.domain || null,
-    data.intent || "save",
-    data.importance || 0.5,
-    data.time_ref || null,
-    data.time_confidence || 0
-  );
+  await db.execute({
+    sql: `
+      INSERT INTO items (id, content, raw_text, type, domain, intent, importance, time_ref, time_confidence)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      id,
+      data.content,
+      data.raw_text,
+      data.type,
+      data.domain || null,
+      data.intent || "save",
+      data.importance || 0.5,
+      data.time_ref || null,
+      data.time_confidence || 0,
+    ],
+  });
   return id;
 }
 
-export function findOrCreateEntity(name: string, type: string): string {
-  const db = getDb();
+export async function findOrCreateEntity(name: string, type: string): Promise<string> {
+  const db = await getDb();
   const normalized = name.toLowerCase().trim();
-  const existing = db.prepare(
-    "SELECT id FROM entities WHERE normalized_name = ? AND type = ?"
-  ).get(normalized, type) as { id: string } | undefined;
+  const existingRs = await db.execute({
+    sql: "SELECT id FROM entities WHERE normalized_name = ? AND type = ?",
+    args: [normalized, type],
+  });
+  const existing = existingRs.rows[0] as unknown as { id: string } | undefined;
   if (existing) return existing.id;
   const id = uuid();
-  db.prepare(
-    "INSERT INTO entities (id, name, normalized_name, type) VALUES (?, ?, ?, ?)"
-  ).run(id, name, normalized, type);
+  await db.execute({
+    sql: "INSERT INTO entities (id, name, normalized_name, type) VALUES (?, ?, ?, ?)",
+    args: [id, name, normalized, type],
+  });
   return id;
 }
 
-export function linkItemEntity(itemId: string, entityId: string, confidence = 1.0) {
-  const db = getDb();
-  db.prepare(
-    "INSERT OR IGNORE INTO item_entities (item_id, entity_id, confidence) VALUES (?, ?, ?)"
-  ).run(itemId, entityId, confidence);
+export async function linkItemEntity(
+  itemId: string,
+  entityId: string,
+  confidence = 1.0
+): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: "INSERT OR IGNORE INTO item_entities (item_id, entity_id, confidence) VALUES (?, ?, ?)",
+    args: [itemId, entityId, confidence],
+  });
 }
 
-export function createEdge(data: {
+export async function createEdge(data: {
   source_id: string;
   target_id: string;
   source_type: string;
   target_type: string;
   edge_type: string;
   weight?: number;
-}) {
-  const db = getDb();
+}): Promise<string> {
+  const db = await getDb();
   const id = uuid();
-  db.prepare(`
-    INSERT INTO edges (id, source_id, target_id, source_type, target_type, edge_type, weight)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, data.source_id, data.target_id, data.source_type, data.target_type, data.edge_type, data.weight || 1.0);
+  await db.execute({
+    sql: `
+      INSERT INTO edges (id, source_id, target_id, source_type, target_type, edge_type, weight)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      id,
+      data.source_id,
+      data.target_id,
+      data.source_type,
+      data.target_type,
+      data.edge_type,
+      data.weight || 1.0,
+    ],
+  });
   return id;
 }
 
 /** Writes (or replaces) the embedding for an owner. One vector per owner. */
-export function saveEmbedding(
+export async function saveEmbedding(
   ownerId: string,
   ownerType: string,
   vector: number[],
   model: string
-) {
-  const db = getDb();
+): Promise<string> {
+  const db = await getDb();
   const id = uuid();
-  const run = db.transaction(() => {
-    db.prepare("DELETE FROM embeddings WHERE owner_id = ? AND owner_type = ?").run(
-      ownerId,
-      ownerType
-    );
-    db.prepare(
-      "INSERT INTO embeddings (id, owner_id, owner_type, vector, model, dim) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(id, ownerId, ownerType, JSON.stringify(vector), model, vector.length);
-  });
-  run();
+  await db.batch(
+    [
+      {
+        sql: "DELETE FROM embeddings WHERE owner_id = ? AND owner_type = ?",
+        args: [ownerId, ownerType],
+      },
+      {
+        sql: "INSERT INTO embeddings (id, owner_id, owner_type, vector, model, dim) VALUES (?, ?, ?, ?, ?, ?)",
+        args: [id, ownerId, ownerType, JSON.stringify(vector), model, vector.length],
+      },
+    ],
+    "write"
+  );
   return id;
 }
 
 /** All item vectors, deserialised and filtered to the current model. */
-export function getItemVectors(model: string): Array<{ itemId: string; vector: number[] }> {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT owner_id, vector FROM embeddings WHERE owner_type = 'item' AND model = ?")
-    .all(model) as Array<{ owner_id: string; vector: string }>;
-  return rows.map((r) => ({ itemId: r.owner_id, vector: JSON.parse(r.vector) as number[] }));
+export async function getItemVectors(
+  model: string
+): Promise<Array<{ itemId: string; vector: number[] }>> {
+  const db = await getDb();
+  const rs = await db.execute({
+    sql: "SELECT owner_id, vector FROM embeddings WHERE owner_type = 'item' AND model = ?",
+    args: [model],
+  });
+  return rs.rows.map((r) => ({
+    itemId: r.owner_id as string,
+    vector: JSON.parse(r.vector as string) as number[],
+  }));
 }
 
 /** Ids of items that have no vector for the given model (used by the backfill). */
-export function getItemsMissingEmbedding(model: string): Array<{ id: string; text: string }> {
-  const db = getDb();
-  return db
-    .prepare(
-      `SELECT i.id, COALESCE(i.content, i.raw_text) AS text
-       FROM items i
-       LEFT JOIN embeddings e
-         ON e.owner_id = i.id AND e.owner_type = 'item' AND e.model = ?
-       WHERE e.id IS NULL`
-    )
-    .all(model) as Array<{ id: string; text: string }>;
+export async function getItemsMissingEmbedding(
+  model: string
+): Promise<Array<{ id: string; text: string }>> {
+  const db = await getDb();
+  const rs = await db.execute({
+    sql: `SELECT i.id, COALESCE(i.content, i.raw_text) AS text
+          FROM items i
+          LEFT JOIN embeddings e
+            ON e.owner_id = i.id AND e.owner_type = 'item' AND e.model = ?
+          WHERE e.id IS NULL`,
+    args: [model],
+  });
+  return rs.rows.map((r) => ({ id: r.id as string, text: r.text as string }));
 }
 
-export function getAllItems() {
-  const db = getDb();
-  return db.prepare(`
+export async function getAllItems() {
+  const db = await getDb();
+  const rs = await db.execute(`
     SELECT i.*,
       GROUP_CONCAT(DISTINCT e.name || '::' || e.type) as entity_list
     FROM items i
@@ -264,12 +330,14 @@ export function getAllItems() {
     LEFT JOIN entities e ON ie.entity_id = e.id
     GROUP BY i.id
     ORDER BY i.created_at DESC
-  `).all();
+  `);
+  return rs.rows;
 }
 
-export function getAllEmbeddings() {
-  const db = getDb();
-  return db.prepare("SELECT * FROM embeddings WHERE owner_type = 'item'").all() as Array<{
+export async function getAllEmbeddings() {
+  const db = await getDb();
+  const rs = await db.execute("SELECT * FROM embeddings WHERE owner_type = 'item'");
+  return rs.rows as unknown as Array<{
     id: string;
     owner_id: string;
     owner_type: string;
@@ -278,23 +346,28 @@ export function getAllEmbeddings() {
   }>;
 }
 
-export function deleteItem(id: string) {
-  const db = getDb();
-  db.prepare("DELETE FROM embeddings WHERE owner_id = ?").run(id);
-  db.prepare("DELETE FROM edges WHERE source_id = ? OR target_id = ?").run(id, id);
-  db.prepare("DELETE FROM items WHERE id = ?").run(id);
+export async function deleteItem(id: string): Promise<void> {
+  const db = await getDb();
+  await db.batch(
+    [
+      { sql: "DELETE FROM embeddings WHERE owner_id = ?", args: [id] },
+      { sql: "DELETE FROM edges WHERE source_id = ? OR target_id = ?", args: [id, id] },
+      { sql: "DELETE FROM items WHERE id = ?", args: [id] },
+    ],
+    "write"
+  );
   // item_entities is cleared by ON DELETE CASCADE, but the entities themselves
   // would linger forever. Without this the table leaks on every delete.
-  pruneOrphanEntities();
+  await pruneOrphanEntities();
 }
 
 /** Removes entities no longer referenced by any item. Returns rows deleted. */
-export function pruneOrphanEntities(): number {
-  const db = getDb();
-  const info = db
-    .prepare("DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM item_entities)")
-    .run();
-  return info.changes;
+export async function pruneOrphanEntities(): Promise<number> {
+  const db = await getDb();
+  const rs = await db.execute(
+    "DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM item_entities)"
+  );
+  return rs.rowsAffected;
 }
 
 /**
@@ -303,32 +376,40 @@ export function pruneOrphanEntities(): number {
  *
  * Shared by POST /api/parse and PUT /api/items, which previously each carried
  * their own copy of this logic.
+ *
+ * Not a single atomic client.batch(): findOrCreateEntity needs a SELECT before
+ * each INSERT, so the statements can't all be known up front. The two initial
+ * deletes are still batched together.
  */
-export function syncItemEntities(
+export async function syncItemEntities(
   itemId: string,
   entities: Array<{ name: string; type: string }>
-): string[] {
-  const db = getDb();
-  const run = db.transaction(() => {
-    db.prepare("DELETE FROM item_entities WHERE item_id = ?").run(itemId);
-    db.prepare("DELETE FROM edges WHERE source_id = ? AND edge_type = 'MENTIONS'").run(itemId);
+): Promise<string[]> {
+  const db = await getDb();
+  await db.batch(
+    [
+      { sql: "DELETE FROM item_entities WHERE item_id = ?", args: [itemId] },
+      {
+        sql: "DELETE FROM edges WHERE source_id = ? AND edge_type = 'MENTIONS'",
+        args: [itemId],
+      },
+    ],
+    "write"
+  );
 
-    const names: string[] = [];
-    for (const ent of entities) {
-      const entityId = findOrCreateEntity(ent.name, ent.type);
-      linkItemEntity(itemId, entityId);
-      createEdge({
-        source_id: itemId,
-        target_id: entityId,
-        source_type: "item",
-        target_type: "entity",
-        edge_type: "MENTIONS",
-      });
-      names.push(ent.name);
-    }
-    pruneOrphanEntities();
-    return names;
-  });
-  return run();
+  const names: string[] = [];
+  for (const ent of entities) {
+    const entityId = await findOrCreateEntity(ent.name, ent.type);
+    await linkItemEntity(itemId, entityId);
+    await createEdge({
+      source_id: itemId,
+      target_id: entityId,
+      source_type: "item",
+      target_type: "entity",
+      edge_type: "MENTIONS",
+    });
+    names.push(ent.name);
+  }
+  await pruneOrphanEntities();
+  return names;
 }
-

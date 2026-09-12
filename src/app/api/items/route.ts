@@ -7,7 +7,7 @@ import { mirror, neighbourIdsOf, entityNamesOf } from "@/lib/markdown";
 
 export async function GET() {
   try {
-    const rows = getAllItems() as Array<{
+    const rows = (await getAllItems()) as unknown as Array<{
       id: string;
       content: string;
       raw_text: string;
@@ -48,9 +48,9 @@ export async function DELETE(req: NextRequest) {
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
     // capture neighbours and entities first: deleteItem removes the edges and
     // prunes orphan entities, after which neither can be discovered
-    const neighbours = neighbourIdsOf(id);
-    const entities = entityNamesOf(id);
-    deleteItem(id);
+    const neighbours = await neighbourIdsOf(id);
+    const entities = await entityNamesOf(id);
+    await deleteItem(id);
     await mirror(id, neighbours, entities);
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
@@ -63,7 +63,7 @@ export async function PATCH(req: NextRequest) {
   try {
     const { id, domain } = await req.json();
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
-    const db = getDb();
+    const db = await getDb();
 
     // Manual metadata override: does NOT re-run the LLM parse, unlike PUT above.
     // Sets domain_locked=1 so a future re-parse (out of scope here) knows to leave
@@ -71,14 +71,18 @@ export async function PATCH(req: NextRequest) {
     if (typeof domain === "string") {
       const trimmed = domain.trim();
       if (!trimmed) return NextResponse.json({ error: "domain non può essere vuoto" }, { status: 400 });
-      db.prepare(
-        "UPDATE items SET domain = ?, domain_locked = 1, updated_at = datetime('now') WHERE id = ?"
-      ).run(trimmed, id);
+      await db.execute({
+        sql: "UPDATE items SET domain = ?, domain_locked = 1, updated_at = datetime('now') WHERE id = ?",
+        args: [trimmed, id],
+      });
       return NextResponse.json({ ok: true, domain: trimmed, domainLocked: true });
     }
 
     // Default behaviour, unchanged: {id} alone just bumps usage_count.
-    db.prepare("UPDATE items SET usage_count = COALESCE(usage_count, 0) + 1 WHERE id = ?").run(id);
+    await db.execute({
+      sql: "UPDATE items SET usage_count = COALESCE(usage_count, 0) + 1 WHERE id = ?",
+      args: [id],
+    });
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -92,25 +96,36 @@ export async function PUT(req: NextRequest) {
     if (!id || !text) return NextResponse.json({ error: "id and text required" }, { status: 400 });
 
     const parsed = await parseMemory(text);
-    const db = getDb();
+    const db = await getDb();
 
     // an edit can drop an entity, and syncItemEntities prunes it before the mirror runs
-    const previousEntities = entityNamesOf(id);
-    const previousNeighbours = neighbourIdsOf(id);
+    const previousEntities = await entityNamesOf(id);
+    const previousNeighbours = await neighbourIdsOf(id);
 
-    db.prepare(`
-      UPDATE items SET raw_text = ?, content = ?, type = ?, domain = ?, intent = ?,
-        time_ref = ?, time_confidence = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(text, parsed.summary, parsed.type, parsed.domain, parsed.intent,
-           parsed.time.datetime || null, parsed.time.confidence, id);
+    await db.execute({
+      sql: `
+        UPDATE items SET raw_text = ?, content = ?, type = ?, domain = ?, intent = ?,
+          time_ref = ?, time_confidence = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `,
+      args: [
+        text,
+        parsed.summary,
+        parsed.type,
+        parsed.domain,
+        parsed.intent,
+        parsed.time.datetime || null,
+        parsed.time.confidence,
+        id,
+      ],
+    });
 
-    const entityNames = syncItemEntities(id, parsed.entities);
+    const entityNames = await syncItemEntities(id, parsed.entities);
 
     // the text changed, so both the stored vector and the derived edges are stale
     const vector = await embed(parsed.summary || text, "passage");
-    saveEmbedding(id, "item", vector, EMBED_MODEL);
-    rebuildItemEdges(id, vector);
+    await saveEmbedding(id, "item", vector, EMBED_MODEL);
+    await rebuildItemEdges(id, vector);
     await mirror(id, previousNeighbours, previousEntities);
 
     return NextResponse.json({

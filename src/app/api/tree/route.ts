@@ -20,15 +20,14 @@ interface TreeItem {
 
 export async function GET() {
   try {
-    const db = getDb();
+    const db = await getDb();
 
-    const items = db
-      .prepare(
-        `SELECT id, content, type, domain, time_ref AS timeRef, created_at AS createdAt
-         FROM items
-         ORDER BY created_at DESC`
-      )
-      .all() as TreeItem[];
+    const itemsRs = await db.execute(
+      `SELECT id, content, type, domain, time_ref AS timeRef, created_at AS createdAt
+       FROM items
+       ORDER BY created_at DESC`
+    );
+    const items = itemsRs.rows as unknown as TreeItem[];
 
     // Group by domain, keeping the null ("Senza categoria") bucket only if
     // it actually ends up with items — which it does by construction here,
@@ -56,16 +55,21 @@ export async function GET() {
       .filter((group) => group.domain !== null || group.items.length > 0);
 
     // Entities, each with the items that mention them.
-    const entityRows = db
-      .prepare(
-        `SELECT e.id AS entityId, e.name AS name, e.type AS type,
-                i.id AS itemId, i.content AS content
-         FROM entities e
-         JOIN item_entities ie ON ie.entity_id = e.id
-         JOIN items i ON i.id = ie.item_id
-         ORDER BY e.name COLLATE NOCASE, i.created_at DESC`
-      )
-      .all() as Array<{ entityId: string; name: string; type: string; itemId: string; content: string }>;
+    const entityRowsRs = await db.execute(
+      `SELECT e.id AS entityId, e.name AS name, e.type AS type,
+              i.id AS itemId, i.content AS content
+       FROM entities e
+       JOIN item_entities ie ON ie.entity_id = e.id
+       JOIN items i ON i.id = ie.item_id
+       ORDER BY e.name COLLATE NOCASE, i.created_at DESC`
+    );
+    const entityRows = entityRowsRs.rows as unknown as Array<{
+      entityId: string;
+      name: string;
+      type: string;
+      itemId: string;
+      content: string;
+    }>;
 
     const entityBuckets = new Map<
       string,
