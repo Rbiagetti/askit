@@ -2,7 +2,8 @@ import Database from "better-sqlite3";
 import path from "path";
 import { v4 as uuid } from "uuid";
 
-const DB_PATH = path.join(process.cwd(), "secondbrain.db");
+// Overridable so benchmarks and tests can run against a throwaway copy
+const DB_PATH = process.env.SB_DB_PATH || path.join(process.cwd(), "secondbrain.db");
 
 let _db: Database.Database | null = null;
 
@@ -83,6 +84,33 @@ function migrate(db: Database.Database) {
     "ALTER TABLE embeddings ADD COLUMN dim INTEGER",
     // traversal goes both ways: entity -> items, not just item -> entities
     "CREATE INDEX IF NOT EXISTS idx_item_entities_entity ON item_entities(entity_id)",
+    // collapse any pre-existing duplicates, then make the upserts in lib/graph.ts possible
+    `DELETE FROM edges WHERE rowid NOT IN (
+       SELECT MIN(rowid) FROM edges GROUP BY source_id, target_id, edge_type
+     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique
+       ON edges(source_id, target_id, edge_type)`,
+    // Lexical search, to catch what embeddings miss: proper nouns, acronyms, rare terms.
+    // External-content table: the rows live in items, FTS only holds the index.
+    `CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+       content, raw_text,
+       content='items', content_rowid='rowid',
+       tokenize='unicode61 remove_diacritics 2'
+     )`,
+    `CREATE TRIGGER IF NOT EXISTS items_fts_ai AFTER INSERT ON items BEGIN
+       INSERT INTO items_fts(rowid, content, raw_text)
+       VALUES (new.rowid, new.content, new.raw_text);
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS items_fts_ad AFTER DELETE ON items BEGIN
+       INSERT INTO items_fts(items_fts, rowid, content, raw_text)
+       VALUES ('delete', old.rowid, old.content, old.raw_text);
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS items_fts_au AFTER UPDATE ON items BEGIN
+       INSERT INTO items_fts(items_fts, rowid, content, raw_text)
+       VALUES ('delete', old.rowid, old.content, old.raw_text);
+       INSERT INTO items_fts(rowid, content, raw_text)
+       VALUES (new.rowid, new.content, new.raw_text);
+     END`,
   ];
   for (const sql of migrations) {
     try {
@@ -90,6 +118,22 @@ function migrate(db: Database.Database) {
     } catch {
       // already applied
     }
+  }
+
+  // Backfill the FTS index for rows that predate it — the triggers only cover new writes.
+  //
+  // This cannot be detected by comparing counts: on an external-content FTS5 table
+  // "SELECT COUNT(*) FROM items_fts" reads through to items, so index-empty and
+  // index-full look identical. Use the schema version instead.
+  const SCHEMA_VERSION = 1;
+  try {
+    const current = db.pragma("user_version", { simple: true }) as number;
+    if (current < SCHEMA_VERSION) {
+      db.exec("INSERT INTO items_fts(items_fts) VALUES('rebuild')");
+      db.pragma(`user_version = ${SCHEMA_VERSION}`);
+    }
+  } catch {
+    // FTS5 unavailable in this SQLite build — retrieval degrades to the other generators
   }
 }
 

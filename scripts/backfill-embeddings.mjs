@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 const EMBED_MODEL = "Xenova/multilingual-e5-small";
 const BATCH = 16;
 
-const db = new Database(path.join(process.cwd(), "secondbrain.db"));
+const db = new Database(process.env.SB_DB_PATH || path.join(process.cwd(), "secondbrain.db"));
 db.pragma("journal_mode = WAL");
 
 // Match the schema migration in src/lib/db.ts when running against an older DB

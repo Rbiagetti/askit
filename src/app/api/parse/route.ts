@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseMemory } from "@/lib/groq";
 import { createItem, syncItemEntities, saveEmbedding } from "@/lib/db";
 import { embed, EMBED_MODEL } from "@/lib/embed";
+import { rebuildItemEdges } from "@/lib/graph";
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
 
     const vector = await embed(parsed.summary || text, "passage");
     saveEmbedding(itemId, "item", vector, EMBED_MODEL);
+    rebuildItemEdges(itemId, vector);
 
     return NextResponse.json({
       id: itemId,

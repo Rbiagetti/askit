@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAllItems, deleteItem, getDb, syncItemEntities, saveEmbedding } from "@/lib/db";
 import { parseMemory } from "@/lib/groq";
 import { embed, EMBED_MODEL } from "@/lib/embed";
+import { rebuildItemEdges } from "@/lib/graph";
 
 export async function GET() {
   try {
@@ -82,9 +83,10 @@ export async function PUT(req: NextRequest) {
 
     const entityNames = syncItemEntities(id, parsed.entities);
 
-    // the text changed, so the stored vector is stale
+    // the text changed, so both the stored vector and the derived edges are stale
     const vector = await embed(parsed.summary || text, "passage");
     saveEmbedding(id, "item", vector, EMBED_MODEL);
+    rebuildItemEdges(id, vector);
 
     return NextResponse.json({
       id, content: parsed.summary, text,
