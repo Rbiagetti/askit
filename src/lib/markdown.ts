@@ -90,33 +90,37 @@ async function ensureVault(): Promise<void> {
   await fs.writeFile(path.join(VAULT_PATH, "README.md"), VAULT_README, "utf8");
 }
 
-function loadItem(itemId: string): ItemRow | undefined {
-  return getDb().prepare("SELECT * FROM items WHERE id = ?").get(itemId) as ItemRow | undefined;
+async function loadItem(itemId: string): Promise<ItemRow | undefined> {
+  const db = await getDb();
+  const rs = await db.execute({ sql: "SELECT * FROM items WHERE id = ?", args: [itemId] });
+  return rs.rows[0] as unknown as ItemRow | undefined;
 }
 
-function loadEntities(itemId: string): string[] {
-  return (
-    getDb()
-      .prepare(
-        `SELECT e.name FROM entities e
-         JOIN item_entities ie ON ie.entity_id = e.id
-         WHERE ie.item_id = ? ORDER BY e.name`
-      )
-      .all(itemId) as Array<{ name: string }>
-  ).map((r) => r.name);
+async function loadEntities(itemId: string): Promise<string[]> {
+  const db = await getDb();
+  const rs = await db.execute({
+    sql: `SELECT e.name FROM entities e
+          JOIN item_entities ie ON ie.entity_id = e.id
+          WHERE ie.item_id = ? ORDER BY e.name`,
+    args: [itemId],
+  });
+  return (rs.rows as unknown as Array<{ name: string }>).map((r) => r.name);
 }
 
-function loadLinks(itemId: string): Array<{ id: string; type: string; weight: number }> {
-  return getDb()
-    .prepare(
-      `SELECT CASE WHEN source_id = ? THEN target_id ELSE source_id END AS id,
-              edge_type AS type, weight
-       FROM edges
-       WHERE source_type = 'item' AND target_type = 'item'
-         AND (source_id = ? OR target_id = ?)
-       ORDER BY weight DESC`
-    )
-    .all(itemId, itemId, itemId) as Array<{ id: string; type: string; weight: number }>;
+async function loadLinks(
+  itemId: string
+): Promise<Array<{ id: string; type: string; weight: number }>> {
+  const db = await getDb();
+  const rs = await db.execute({
+    sql: `SELECT CASE WHEN source_id = ? THEN target_id ELSE source_id END AS id,
+                 edge_type AS type, weight
+          FROM edges
+          WHERE source_type = 'item' AND target_type = 'item'
+            AND (source_id = ? OR target_id = ?)
+          ORDER BY weight DESC`,
+    args: [itemId, itemId, itemId],
+  });
+  return rs.rows as unknown as Array<{ id: string; type: string; weight: number }>;
 }
 
 function renderNote(item: ItemRow, entities: string[], links: Array<{ name: string; type: string; weight: number }>): string {
@@ -171,8 +175,9 @@ function renderEntity(name: string, items: Array<{ file: string }>): string {
 }
 
 /** Ids of the items linked to this one — the notes whose wikilinks mention it. */
-export function neighbourIdsOf(itemId: string): string[] {
-  return loadLinks(itemId).map((l) => l.id);
+export async function neighbourIdsOf(itemId: string): Promise<string[]> {
+  const links = await loadLinks(itemId);
+  return links.map((l) => l.id);
 }
 
 /**
@@ -184,13 +189,14 @@ export function neighbourIdsOf(itemId: string): string[] {
  */
 async function writeEntityStub(name: string): Promise<void> {
   const file = path.join(VAULT_PATH, ENTITIES_DIR, `${safeLinkTarget(name)}.md`);
-  const rows = getDb()
-    .prepare(
-      `SELECT ie.item_id FROM entities e
-       JOIN item_entities ie ON ie.entity_id = e.id
-       WHERE e.name = ?`
-    )
-    .all(name) as Array<{ item_id: string }>;
+  const db = await getDb();
+  const rs = await db.execute({
+    sql: `SELECT ie.item_id FROM entities e
+          JOIN item_entities ie ON ie.entity_id = e.id
+          WHERE e.name = ?`,
+    args: [name],
+  });
+  const rows = rs.rows as unknown as Array<{ item_id: string }>;
 
   // entity pruned from the DB (last citing note deleted): drop the stub
   if (rows.length === 0) {
@@ -198,8 +204,8 @@ async function writeEntityStub(name: string): Promise<void> {
     return;
   }
 
-  const refs = rows
-    .map((r) => loadItem(r.item_id))
+  const loaded = await Promise.all(rows.map((r) => loadItem(r.item_id)));
+  const refs = loaded
     .filter((i): i is ItemRow => i !== undefined)
     .map((i) => ({ file: fileNameFor(i) }));
 
@@ -208,7 +214,7 @@ async function writeEntityStub(name: string): Promise<void> {
 
 /** Writes a single note file. Does not cascade — callers handle neighbours. */
 async function writeNote(itemId: string, index: IndexMap): Promise<void> {
-  const item = loadItem(itemId);
+  const item = await loadItem(itemId);
   if (!item) return;
 
   const fileName = fileNameFor(item);
@@ -217,17 +223,22 @@ async function writeNote(itemId: string, index: IndexMap): Promise<void> {
     await fs.rm(path.join(VAULT_PATH, NOTES_DIR, previous), { force: true });
   }
 
-  const links = loadLinks(itemId)
-    .map((l) => {
-      const target = loadItem(l.id);
+  const rawLinks = await loadLinks(itemId);
+  const resolvedLinks = await Promise.all(
+    rawLinks.map(async (l) => {
+      const target = await loadItem(l.id);
       if (!target) return null;
       return { name: fileNameFor(target).replace(/\.md$/, ""), type: l.type, weight: l.weight };
     })
-    .filter((x): x is { name: string; type: string; weight: number } => x !== null);
+  );
+  const links = resolvedLinks.filter(
+    (x): x is { name: string; type: string; weight: number } => x !== null
+  );
 
+  const entities = await loadEntities(itemId);
   await fs.writeFile(
     path.join(VAULT_PATH, NOTES_DIR, fileName),
-    renderNote(item, loadEntities(itemId), links),
+    renderNote(item, entities, links),
     "utf8"
   );
   index[itemId] = fileName;
@@ -247,7 +258,7 @@ export async function exportItem(
 ): Promise<void> {
   await ensureVault();
   const index = await readIndex();
-  const item = loadItem(itemId);
+  const item = await loadItem(itemId);
 
   if (!item) {
     // deleted: drop its file, then refresh whoever used to point at it
@@ -260,7 +271,10 @@ export async function exportItem(
     await writeNote(itemId, index);
   }
 
-  const neighbours = new Set([...staleNeighbours, ...(item ? neighbourIdsOf(itemId) : [])]);
+  const neighbours = new Set([
+    ...staleNeighbours,
+    ...(item ? await neighbourIdsOf(itemId) : []),
+  ]);
   neighbours.delete(itemId);
   for (const id of neighbours) {
     await writeNote(id, index);
@@ -269,9 +283,10 @@ export async function exportItem(
   // Entity stubs reference notes by filename too, so every entity of every note
   // we just (re)wrote needs refreshing — including the deleted item's own, which
   // may now be orphaned and have to disappear.
+  const neighbourEntities = await Promise.all([...neighbours].map((id) => loadEntities(id)));
   const touchedEntities = new Set<string>([
-    ...loadEntities(itemId),
-    ...[...neighbours].flatMap((id) => loadEntities(id)),
+    ...(await loadEntities(itemId)),
+    ...neighbourEntities.flat(),
     ...staleEntities,
   ]);
   for (const name of touchedEntities) {
@@ -284,14 +299,15 @@ export async function exportItem(
 /** Full regeneration: every note, every entity stub, removing whatever no longer exists. */
 export async function exportAll(): Promise<{ notes: number; entities: number; removed: number }> {
   await ensureVault();
-  const db = getDb();
-  const items = db.prepare("SELECT * FROM items ORDER BY created_at").all() as ItemRow[];
+  const db = await getDb();
+  const itemsRs = await db.execute("SELECT * FROM items ORDER BY created_at");
+  const items = itemsRs.rows as unknown as ItemRow[];
 
   const index: IndexMap = {};
   const nameById = new Map(items.map((i) => [i.id, fileNameFor(i)]));
 
   for (const item of items) {
-    const linkRows = loadLinks(item.id);
+    const linkRows = await loadLinks(item.id);
     const links = linkRows
       .map((l) => {
         const name = nameById.get(l.id);
@@ -300,22 +316,22 @@ export async function exportAll(): Promise<{ notes: number; entities: number; re
       .filter((x): x is { name: string; type: string; weight: number } => x !== null);
 
     const fileName = nameById.get(item.id)!;
+    const entities = await loadEntities(item.id);
     await fs.writeFile(
       path.join(VAULT_PATH, NOTES_DIR, fileName),
-      renderNote(item, loadEntities(item.id), links),
+      renderNote(item, entities, links),
       "utf8"
     );
     index[item.id] = fileName;
   }
 
   // entity stubs — these are what give Obsidian's graph its hubs
-  const entities = db
-    .prepare(
-      `SELECT e.name, ie.item_id
-       FROM entities e JOIN item_entities ie ON ie.entity_id = e.id
-       ORDER BY e.name`
-    )
-    .all() as Array<{ name: string; item_id: string }>;
+  const entitiesRs = await db.execute(
+    `SELECT e.name, ie.item_id
+     FROM entities e JOIN item_entities ie ON ie.entity_id = e.id
+     ORDER BY e.name`
+  );
+  const entities = entitiesRs.rows as unknown as Array<{ name: string; item_id: string }>;
 
   const byEntity = new Map<string, Array<{ file: string }>>();
   for (const row of entities) {
@@ -372,7 +388,7 @@ export async function mirror(
 }
 
 /** Entity names attached to an item. Capture before a delete, when they still exist. */
-export function entityNamesOf(itemId: string): string[] {
+export async function entityNamesOf(itemId: string): Promise<string[]> {
   return loadEntities(itemId);
 }
 

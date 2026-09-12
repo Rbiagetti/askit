@@ -35,30 +35,31 @@ export async function GET(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-    const db = getDb();
-    const row = db.prepare("SELECT * FROM items WHERE id = ?").get(id) as ItemRow | undefined;
+    const db = await getDb();
+    const rowRs = await db.execute({ sql: "SELECT * FROM items WHERE id = ?", args: [id] });
+    const row = rowRs.rows[0] as unknown as ItemRow | undefined;
     if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-    const entities = db
-      .prepare(
-        `SELECT e.name, e.type
-         FROM entities e
-         JOIN item_entities ie ON ie.entity_id = e.id
-         WHERE ie.item_id = ?
-         ORDER BY e.name`
-      )
-      .all(id) as Array<{ name: string; type: string }>;
+    const entitiesRs = await db.execute({
+      sql: `SELECT e.name, e.type
+            FROM entities e
+            JOIN item_entities ie ON ie.entity_id = e.id
+            WHERE ie.item_id = ?
+            ORDER BY e.name`,
+      args: [id],
+    });
+    const entities = entitiesRs.rows as unknown as Array<{ name: string; type: string }>;
 
     // Item↔item edges only — MENTIONS (item→entity) is already covered by `entities` above.
-    const edgeRows = db
-      .prepare(
-        `SELECT id, source_id, target_id, edge_type, weight
-         FROM edges
-         WHERE source_type = 'item' AND target_type = 'item'
-           AND (source_id = ? OR target_id = ?)
-         ORDER BY weight DESC`
-      )
-      .all(id, id) as Array<{
+    const edgeRowsRs = await db.execute({
+      sql: `SELECT id, source_id, target_id, edge_type, weight
+            FROM edges
+            WHERE source_type = 'item' AND target_type = 'item'
+              AND (source_id = ? OR target_id = ?)
+            ORDER BY weight DESC`,
+      args: [id, id],
+    });
+    const edgeRows = edgeRowsRs.rows as unknown as Array<{
       id: string;
       source_id: string;
       target_id: string;
@@ -72,9 +73,16 @@ export async function GET(
     let partners = new Map<string, { id: string; content: string; type: string; domain: string | null }>();
     if (partnerIds.length > 0) {
       const placeholders = partnerIds.map(() => "?").join(",");
-      const partnerRows = db
-        .prepare(`SELECT id, content, type, domain FROM items WHERE id IN (${placeholders})`)
-        .all(...partnerIds) as Array<{ id: string; content: string; type: string; domain: string | null }>;
+      const partnerRowsRs = await db.execute({
+        sql: `SELECT id, content, type, domain FROM items WHERE id IN (${placeholders})`,
+        args: partnerIds,
+      });
+      const partnerRows = partnerRowsRs.rows as unknown as Array<{
+        id: string;
+        content: string;
+        type: string;
+        domain: string | null;
+      }>;
       partners = new Map(partnerRows.map((p) => [p.id, p]));
     }
 

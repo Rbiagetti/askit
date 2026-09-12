@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ routed: "search", parsed });
     }
 
-    const itemId = createItem({
+    const itemId = await createItem({
       content: parsed.summary,
       raw_text: text,
       type: parsed.type,
@@ -37,11 +37,11 @@ export async function POST(req: NextRequest) {
       time_confidence: parsed.time.confidence,
     });
 
-    const entityNames = syncItemEntities(itemId, parsed.entities);
+    const entityNames = await syncItemEntities(itemId, parsed.entities);
 
     const vector = await embed(parsed.summary || text, "passage");
-    saveEmbedding(itemId, "item", vector, EMBED_MODEL);
-    rebuildItemEdges(itemId, vector);
+    await saveEmbedding(itemId, "item", vector, EMBED_MODEL);
+    await rebuildItemEdges(itemId, vector);
 
     // Reasoned linking runs over the shortlist the retrieval already produced —
     // never over the corpus. Opt-in: see isReasonedLinkingEnabled().
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
           parsed.summary || text,
           neighbourhood.items.map((i) => ({ id: i.id, content: i.content }))
         );
-        reasoned = saveReasonedEdges(
+        reasoned = await saveReasonedEdges(
           itemId,
           links.map((l) => ({
             targetId: l.id,

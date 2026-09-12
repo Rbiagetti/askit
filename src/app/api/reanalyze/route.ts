@@ -30,15 +30,15 @@ export async function POST(req: NextRequest) {
         ? Math.min(MAX_LIMIT, Math.floor(requestedLimit))
         : DEFAULT_LIMIT;
 
-    const db = getDb();
-    const pending = db
-      .prepare(
-        `SELECT id, raw_text, domain_locked FROM items
-         WHERE reanalyzed_at IS NULL
-         ORDER BY created_at ASC
-         LIMIT ?`
-      )
-      .all(limit) as PendingItem[];
+    const db = await getDb();
+    const pendingRs = await db.execute({
+      sql: `SELECT id, raw_text, domain_locked FROM items
+            WHERE reanalyzed_at IS NULL
+            ORDER BY created_at ASC
+            LIMIT ?`,
+      args: [limit],
+    });
+    const pending = pendingRs.rows as unknown as PendingItem[];
 
     const errors: Array<{ id: string; message: string }> = [];
     let processed = 0;
@@ -50,41 +50,46 @@ export async function POST(req: NextRequest) {
 
         // domain_locked items keep their domain — a parallel job may have set it deliberately.
         if (item.domain_locked) {
-          db.prepare(
-            `UPDATE items SET content = ?, type = ?, intent = ?,
-               time_ref = ?, time_confidence = ?, updated_at = datetime('now')
-             WHERE id = ?`
-          ).run(
-            parsed.summary,
-            parsed.type,
-            parsed.intent,
-            parsed.time.datetime || null,
-            parsed.time.confidence,
-            item.id
-          );
+          await db.execute({
+            sql: `UPDATE items SET content = ?, type = ?, intent = ?,
+                    time_ref = ?, time_confidence = ?, updated_at = datetime('now')
+                  WHERE id = ?`,
+            args: [
+              parsed.summary,
+              parsed.type,
+              parsed.intent,
+              parsed.time.datetime || null,
+              parsed.time.confidence,
+              item.id,
+            ],
+          });
         } else {
-          db.prepare(
-            `UPDATE items SET content = ?, type = ?, domain = ?, intent = ?,
-               time_ref = ?, time_confidence = ?, updated_at = datetime('now')
-             WHERE id = ?`
-          ).run(
-            parsed.summary,
-            parsed.type,
-            parsed.domain,
-            parsed.intent,
-            parsed.time.datetime || null,
-            parsed.time.confidence,
-            item.id
-          );
+          await db.execute({
+            sql: `UPDATE items SET content = ?, type = ?, domain = ?, intent = ?,
+                    time_ref = ?, time_confidence = ?, updated_at = datetime('now')
+                  WHERE id = ?`,
+            args: [
+              parsed.summary,
+              parsed.type,
+              parsed.domain,
+              parsed.intent,
+              parsed.time.datetime || null,
+              parsed.time.confidence,
+              item.id,
+            ],
+          });
         }
 
-        syncItemEntities(item.id, parsed.entities);
+        await syncItemEntities(item.id, parsed.entities);
 
         const vector = await embed(parsed.summary || item.raw_text, "passage");
-        saveEmbedding(item.id, "item", vector, EMBED_MODEL);
-        rebuildItemEdges(item.id, vector);
+        await saveEmbedding(item.id, "item", vector, EMBED_MODEL);
+        await rebuildItemEdges(item.id, vector);
 
-        db.prepare("UPDATE items SET reanalyzed_at = datetime('now') WHERE id = ?").run(item.id);
+        await db.execute({
+          sql: "UPDATE items SET reanalyzed_at = datetime('now') WHERE id = ?",
+          args: [item.id],
+        });
         processed++;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Unknown error";
@@ -97,9 +102,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const { remaining } = db
-      .prepare("SELECT COUNT(*) AS remaining FROM items WHERE reanalyzed_at IS NULL")
-      .get() as { remaining: number };
+    const remainingRs = await db.execute(
+      "SELECT COUNT(*) AS remaining FROM items WHERE reanalyzed_at IS NULL"
+    );
+    const { remaining } = remainingRs.rows[0] as unknown as { remaining: number };
 
     return NextResponse.json({ processed, remaining, errors });
   } catch (error: unknown) {

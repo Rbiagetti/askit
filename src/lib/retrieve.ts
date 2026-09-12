@@ -53,10 +53,11 @@ function normalize(text: string): string {
  * ① Entity anchors — highest precision. If the input names "Interstellar",
  * notes about Interstellar are relevant with certainty, no semantic guesswork.
  */
-function findAnchors(input: string, excludeId?: string): string[] {
-  const db = getDb();
+async function findAnchors(input: string, excludeId?: string): Promise<string[]> {
+  const db = await getDb();
   const haystack = ` ${normalize(input)} `;
-  const entities = db.prepare("SELECT id, normalized_name FROM entities").all() as Array<{
+  const entitiesRs = await db.execute("SELECT id, normalized_name FROM entities");
+  const entities = entitiesRs.rows as unknown as Array<{
     id: string;
     normalized_name: string;
   }>;
@@ -72,16 +73,16 @@ function findAnchors(input: string, excludeId?: string): string[] {
   if (hits.length === 0) return [];
 
   const placeholders = hits.map(() => "?").join(",");
-  const rows = db
-    .prepare(
-      `SELECT ie.item_id, COUNT(*) AS matches
-       FROM item_entities ie
-       WHERE ie.entity_id IN (${placeholders})
-       GROUP BY ie.item_id
-       ORDER BY matches DESC
-       LIMIT ${PER_SOURCE_LIMIT}`
-    )
-    .all(...hits) as Array<{ item_id: string; matches: number }>;
+  const rs = await db.execute({
+    sql: `SELECT ie.item_id, COUNT(*) AS matches
+          FROM item_entities ie
+          WHERE ie.entity_id IN (${placeholders})
+          GROUP BY ie.item_id
+          ORDER BY matches DESC
+          LIMIT ${PER_SOURCE_LIMIT}`,
+    args: hits,
+  });
+  const rows = rs.rows as unknown as Array<{ item_id: string; matches: number }>;
 
   return rows.map((r) => r.item_id).filter((id) => id !== excludeId);
 }
@@ -94,9 +95,13 @@ function escapeRegex(s: string): string {
  * ② Graph expansion — the reason a graph exists. Reaches notes that share neither
  * words nor entities with the input, but sit one hop from something that does.
  */
-function expandNeighborhood(seedIds: string[], hops: 1 | 2, excludeId?: string): string[] {
+async function expandNeighborhood(
+  seedIds: string[],
+  hops: 1 | 2,
+  excludeId?: string
+): Promise<string[]> {
   if (seedIds.length === 0) return [];
-  const db = getDb();
+  const db = await getDb();
 
   const scores = new Map<string, number>();
   let frontier = seedIds;
@@ -105,19 +110,16 @@ function expandNeighborhood(seedIds: string[], hops: 1 | 2, excludeId?: string):
   for (let hop = 1; hop <= hops; hop++) {
     if (frontier.length === 0) break;
     const placeholders = frontier.map(() => "?").join(",");
-    const rows = db
-      .prepare(
-        `SELECT CASE WHEN source_id IN (${placeholders}) THEN target_id ELSE source_id END AS neighbour,
-                MAX(weight) AS weight
-         FROM edges
-         WHERE source_type = 'item' AND target_type = 'item'
-           AND (source_id IN (${placeholders}) OR target_id IN (${placeholders}))
-         GROUP BY neighbour`
-      )
-      .all(...frontier, ...frontier, ...frontier) as Array<{
-      neighbour: string;
-      weight: number;
-    }>;
+    const rs = await db.execute({
+      sql: `SELECT CASE WHEN source_id IN (${placeholders}) THEN target_id ELSE source_id END AS neighbour,
+                   MAX(weight) AS weight
+            FROM edges
+            WHERE source_type = 'item' AND target_type = 'item'
+              AND (source_id IN (${placeholders}) OR target_id IN (${placeholders}))
+            GROUP BY neighbour`,
+      args: [...frontier, ...frontier, ...frontier],
+    });
+    const rows = rs.rows as unknown as Array<{ neighbour: string; weight: number }>;
 
     const next: string[] = [];
     for (const r of rows) {
@@ -138,7 +140,8 @@ function expandNeighborhood(seedIds: string[], hops: 1 | 2, excludeId?: string):
 
 /** ③ Vector kNN — covers paraphrase, where wording differs but meaning matches. */
 async function vectorNeighbors(input: string, excludeId?: string): Promise<string[]> {
-  const vectors = getItemVectors(EMBED_MODEL).filter((v) => v.itemId !== excludeId);
+  const allVectors = await getItemVectors(EMBED_MODEL);
+  const vectors = allVectors.filter((v) => v.itemId !== excludeId);
   if (vectors.length === 0) return [];
   const queryVec = await embed(input, "query");
   return vectors
@@ -149,8 +152,8 @@ async function vectorNeighbors(input: string, excludeId?: string): Promise<strin
 }
 
 /** ④ FTS5 — the opposite failure mode of embeddings: rare terms, names, numbers. */
-function lexicalMatches(input: string, excludeId?: string): string[] {
-  const db = getDb();
+async function lexicalMatches(input: string, excludeId?: string): Promise<string[]> {
+  const db = await getDb();
   const terms = normalize(input)
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .split(/\s+/)
@@ -160,16 +163,16 @@ function lexicalMatches(input: string, excludeId?: string): string[] {
   // quote every term so FTS5 operators in user input can't break the query
   const match = terms.map((t) => `"${t}"`).join(" OR ");
   try {
-    const rows = db
-      .prepare(
-        `SELECT i.id
-         FROM items_fts f
-         JOIN items i ON i.rowid = f.rowid
-         WHERE items_fts MATCH ?
-         ORDER BY bm25(items_fts)
-         LIMIT ${PER_SOURCE_LIMIT}`
-      )
-      .all(match) as Array<{ id: string }>;
+    const rs = await db.execute({
+      sql: `SELECT i.id
+            FROM items_fts f
+            JOIN items i ON i.rowid = f.rowid
+            WHERE items_fts MATCH ?
+            ORDER BY bm25(items_fts)
+            LIMIT ${PER_SOURCE_LIMIT}`,
+      args: [match],
+    });
+    const rows = rs.rows as unknown as Array<{ id: string }>;
     return rows.map((r) => r.id).filter((id) => id !== excludeId);
   } catch {
     return []; // FTS unavailable; the other three generators still work
@@ -196,11 +199,14 @@ export async function retrieve(
   opts: { limit?: number; hops?: 1 | 2; excludeId?: string } = {}
 ): Promise<RetrievalResult> {
   const { limit = DEFAULT_LIMIT, hops = 2, excludeId } = opts;
-  const db = getDb();
+  const db = await getDb();
 
-  const anchors = findAnchors(input, excludeId);
-  const graph = expandNeighborhood(anchors, hops, excludeId);
-  const [vector, fts] = [await vectorNeighbors(input, excludeId), lexicalMatches(input, excludeId)];
+  const anchors = await findAnchors(input, excludeId);
+  const graph = await expandNeighborhood(anchors, hops, excludeId);
+  const [vector, fts] = [
+    await vectorNeighbors(input, excludeId),
+    await lexicalMatches(input, excludeId),
+  ];
 
   const ranked = fuse([
     { source: "anchor", ids: anchors },
@@ -209,7 +215,8 @@ export async function retrieve(
     { source: "fts", ids: fts },
   ]).slice(0, limit);
 
-  const corpusSize = (db.prepare("SELECT COUNT(*) AS n FROM items").get() as { n: number }).n;
+  const corpusRs = await db.execute("SELECT COUNT(*) AS n FROM items");
+  const corpusSize = Number((corpusRs.rows[0] as unknown as { n: number }).n);
   if (ranked.length === 0) {
     return {
       items: [],
@@ -220,17 +227,17 @@ export async function retrieve(
   }
 
   const placeholders = ranked.map(() => "?").join(",");
-  const rows = db
-    .prepare(
-      `SELECT i.id, i.content, i.raw_text, i.type, i.domain, i.created_at, i.time_ref,
-              GROUP_CONCAT(DISTINCT e.name) AS entity_list
-       FROM items i
-       LEFT JOIN item_entities ie ON i.id = ie.item_id
-       LEFT JOIN entities e ON ie.entity_id = e.id
-       WHERE i.id IN (${placeholders})
-       GROUP BY i.id`
-    )
-    .all(...ranked.map(([id]) => id)) as Array<{
+  const rowsRs = await db.execute({
+    sql: `SELECT i.id, i.content, i.raw_text, i.type, i.domain, i.created_at, i.time_ref,
+                 GROUP_CONCAT(DISTINCT e.name) AS entity_list
+          FROM items i
+          LEFT JOIN item_entities ie ON i.id = ie.item_id
+          LEFT JOIN entities e ON ie.entity_id = e.id
+          WHERE i.id IN (${placeholders})
+          GROUP BY i.id`,
+    args: ranked.map(([id]) => id),
+  });
+  const rows = rowsRs.rows as unknown as Array<{
     id: string;
     content: string;
     raw_text: string;
