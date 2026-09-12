@@ -189,5 +189,52 @@ export function deleteItem(id: string) {
   db.prepare("DELETE FROM embeddings WHERE owner_id = ?").run(id);
   db.prepare("DELETE FROM edges WHERE source_id = ? OR target_id = ?").run(id, id);
   db.prepare("DELETE FROM items WHERE id = ?").run(id);
+  // item_entities is cleared by ON DELETE CASCADE, but the entities themselves
+  // would linger forever. Without this the table leaks on every delete.
+  pruneOrphanEntities();
+}
+
+/** Removes entities no longer referenced by any item. Returns rows deleted. */
+export function pruneOrphanEntities(): number {
+  const db = getDb();
+  const info = db
+    .prepare("DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM item_entities)")
+    .run();
+  return info.changes;
+}
+
+/**
+ * Replaces an item's entity links with the given set, creating entities as needed
+ * and keeping MENTIONS edges in sync. Returns the entity names.
+ *
+ * Shared by POST /api/parse and PUT /api/items, which previously each carried
+ * their own copy of this logic.
+ */
+export function syncItemEntities(
+  itemId: string,
+  entities: Array<{ name: string; type: string }>
+): string[] {
+  const db = getDb();
+  const run = db.transaction(() => {
+    db.prepare("DELETE FROM item_entities WHERE item_id = ?").run(itemId);
+    db.prepare("DELETE FROM edges WHERE source_id = ? AND edge_type = 'MENTIONS'").run(itemId);
+
+    const names: string[] = [];
+    for (const ent of entities) {
+      const entityId = findOrCreateEntity(ent.name, ent.type);
+      linkItemEntity(itemId, entityId);
+      createEdge({
+        source_id: itemId,
+        target_id: entityId,
+        source_type: "item",
+        target_type: "entity",
+        edge_type: "MENTIONS",
+      });
+      names.push(ent.name);
+    }
+    pruneOrphanEntities();
+    return names;
+  });
+  return run();
 }
 

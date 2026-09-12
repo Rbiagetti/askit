@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllItems, deleteItem, getDb, findOrCreateEntity, linkItemEntity, createEdge } from "@/lib/db";
+import { getAllItems, deleteItem, getDb, syncItemEntities } from "@/lib/db";
 import { parseMemory } from "@/lib/groq";
 
 export async function GET() {
@@ -79,17 +79,7 @@ export async function PUT(req: NextRequest) {
     `).run(text, parsed.summary, parsed.type, parsed.domain, parsed.intent,
            parsed.time.datetime || null, parsed.time.confidence, id);
 
-    // Remove old entity links and re-link
-    db.prepare("DELETE FROM item_entities WHERE item_id = ?").run(id);
-    db.prepare("DELETE FROM edges WHERE source_id = ? AND edge_type = 'MENTIONS'").run(id);
-
-    const entityNames: string[] = [];
-    for (const ent of parsed.entities) {
-      const entityId = findOrCreateEntity(ent.name, ent.type);
-      linkItemEntity(id, entityId);
-      createEdge({ source_id: id, target_id: entityId, source_type: "item", target_type: "entity", edge_type: "MENTIONS" });
-      entityNames.push(ent.name);
-    }
+    const entityNames = syncItemEntities(id, parsed.entities);
 
     return NextResponse.json({
       id, content: parsed.summary, text,

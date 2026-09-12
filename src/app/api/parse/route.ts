@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseMemory } from "@/lib/groq";
-import { createItem, findOrCreateEntity, linkItemEntity, createEdge } from "@/lib/db";
+import { createItem, syncItemEntities } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,17 +21,7 @@ export async function POST(req: NextRequest) {
       time_confidence: parsed.time.confidence,
     });
 
-    const entityNames: string[] = [];
-    for (const ent of parsed.entities) {
-      const entityId = findOrCreateEntity(ent.name, ent.type);
-      linkItemEntity(itemId, entityId);
-      createEdge({
-        source_id: itemId, target_id: entityId,
-        source_type: "item", target_type: "entity",
-        edge_type: "MENTIONS",
-      });
-      entityNames.push(ent.name);
-    }
+    const entityNames = syncItemEntities(itemId, parsed.entities);
 
     return NextResponse.json({
       id: itemId,

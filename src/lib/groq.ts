@@ -28,17 +28,36 @@ Respond ONLY with valid JSON matching this schema:
 Rules:
 - Always extract entities when present
 - Infer domain from context
-- If temporal references exist, convert to ISO8601 (assume current year 2026, current date context)
+- Resolve every temporal reference against the "Current datetime" given in the user message,
+  and always emit time.datetime as an ABSOLUTE ISO8601 timestamp with offset — never a relative
+  expression. "domani alle 18" becomes the actual next-day date at 18:00.
+- If no time is expressed, use null with confidence 0
 - Keep summary concise and in the original language
 - If unsure about type, default to "note"
 - Never add entities that aren't clearly referenced`;
 
-export async function parseMemory(text: string): Promise<ParsedMemory> {
+const TIMEZONE = process.env.SB_TIMEZONE || "Europe/Rome";
+
+/** Temporal context prepended to the input, so relative dates are resolvable. */
+function temporalContext(now: Date): string {
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    timeZone: TIMEZONE,
+  }).format(now);
+  const local = new Intl.DateTimeFormat("sv-SE", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: TIMEZONE,
+  }).format(now);
+  return `Current datetime: ${local} (${weekday}, timezone ${TIMEZONE})\nISO: ${now.toISOString()}`;
+}
+
+export async function parseMemory(text: string, now: Date = new Date()): Promise<ParsedMemory> {
   const completion = await groq.chat.completions.create({
     model: "qwen/qwen3.6-27b",
     messages: [
       { role: "system", content: PARSE_SYSTEM },
-      { role: "user", content: text },
+      { role: "user", content: `${temporalContext(now)}\n\nInput:\n${text}` },
     ],
     temperature: 0.1,
     max_tokens: 1000,
