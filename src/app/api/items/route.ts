@@ -61,9 +61,23 @@ export async function DELETE(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const { id } = await req.json();
+    const { id, domain } = await req.json();
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
     const db = getDb();
+
+    // Manual metadata override: does NOT re-run the LLM parse, unlike PUT above.
+    // Sets domain_locked=1 so a future re-parse (out of scope here) knows to leave
+    // this item's domain alone instead of overwriting it.
+    if (typeof domain === "string") {
+      const trimmed = domain.trim();
+      if (!trimmed) return NextResponse.json({ error: "domain non può essere vuoto" }, { status: 400 });
+      db.prepare(
+        "UPDATE items SET domain = ?, domain_locked = 1, updated_at = datetime('now') WHERE id = ?"
+      ).run(trimmed, id);
+      return NextResponse.json({ ok: true, domain: trimmed, domainLocked: true });
+    }
+
+    // Default behaviour, unchanged: {id} alone just bumps usage_count.
     db.prepare("UPDATE items SET usage_count = COALESCE(usage_count, 0) + 1 WHERE id = ?").run(id);
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
