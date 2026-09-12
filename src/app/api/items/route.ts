@@ -3,6 +3,7 @@ import { getAllItems, deleteItem, getDb, syncItemEntities, saveEmbedding } from 
 import { parseMemory } from "@/lib/groq";
 import { embed, EMBED_MODEL } from "@/lib/embed";
 import { rebuildItemEdges } from "@/lib/graph";
+import { mirror, neighbourIdsOf, entityNamesOf } from "@/lib/markdown";
 
 export async function GET() {
   try {
@@ -45,7 +46,12 @@ export async function DELETE(req: NextRequest) {
   try {
     const { id } = await req.json();
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+    // capture neighbours and entities first: deleteItem removes the edges and
+    // prunes orphan entities, after which neither can be discovered
+    const neighbours = neighbourIdsOf(id);
+    const entities = entityNamesOf(id);
     deleteItem(id);
+    await mirror(id, neighbours, entities);
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -74,6 +80,10 @@ export async function PUT(req: NextRequest) {
     const parsed = await parseMemory(text);
     const db = getDb();
 
+    // an edit can drop an entity, and syncItemEntities prunes it before the mirror runs
+    const previousEntities = entityNamesOf(id);
+    const previousNeighbours = neighbourIdsOf(id);
+
     db.prepare(`
       UPDATE items SET raw_text = ?, content = ?, type = ?, domain = ?, intent = ?,
         time_ref = ?, time_confidence = ?, updated_at = datetime('now')
@@ -87,6 +97,7 @@ export async function PUT(req: NextRequest) {
     const vector = await embed(parsed.summary || text, "passage");
     saveEmbedding(id, "item", vector, EMBED_MODEL);
     rebuildItemEdges(id, vector);
+    await mirror(id, previousNeighbours, previousEntities);
 
     return NextResponse.json({
       id, content: parsed.summary, text,

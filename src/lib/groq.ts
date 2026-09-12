@@ -150,3 +150,64 @@ export async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
 // getEmbedding() lived here and asked the chat model to invent a 64-float
 // "semantic fingerprint", falling back to Math.random(). It has been replaced by
 // real local embeddings — see lib/embed.ts and PIANO.md §1.2.
+
+const LINK_SYSTEM = `You decide how a new note relates to a shortlist of existing notes.
+
+Respond ONLY with valid JSON:
+{"edges": [{"index": <number>, "type": "RELATES_TO"|"CONTINUES"|"CONTRADICTS"|"DUPLICATES", "confidence": 0.0-1.0}]}
+
+Meaning:
+- DUPLICATES  same fact restated; one could replace the other
+- CONTINUES   follow-up or later development of the same thread
+- CONTRADICTS states something incompatible with the other note
+- RELATES_TO  genuinely connected but none of the above
+
+Rules:
+- Only include connections a person would agree with. Most pairs are NOT connected.
+- Sharing a topic or a name is not enough on its own.
+- Return an empty array rather than inventing links.
+- Never include an index that is not in the list.`;
+
+/**
+ * Asks the model which of the shortlisted candidates are genuinely related.
+ *
+ * The only call in the system that reasons about structure, hence the raised
+ * reasoning_effort. Kept small on purpose: max_tokens counts against the free
+ * tier's 1000 output-tokens-per-minute limit, and reasoning tokens count too.
+ */
+export async function linkWithLLM(
+  note: string,
+  candidates: Array<{ id: string; content: string }>
+): Promise<Array<{ id: string; type: string; confidence: number }>> {
+  if (candidates.length === 0) return [];
+
+  const list = candidates.map((c, i) => `[${i}] ${c.content}`).join("\n");
+  const completion = await groq.chat.completions.create({
+    model: "openai/gpt-oss-120b",
+    messages: [
+      { role: "system", content: LINK_SYSTEM },
+      { role: "user", content: `New note:\n${note}\n\nExisting notes:\n${list}` },
+    ],
+    temperature: 0.1,
+    max_tokens: 400,
+    response_format: { type: "json_object" },
+    reasoning_effort: "low",
+  });
+
+  try {
+    const parsed = JSON.parse(completion.choices[0]?.message?.content || "{}");
+    const edges = Array.isArray(parsed.edges) ? parsed.edges : [];
+    return edges
+      .filter(
+        (e: { index?: number }) =>
+          typeof e.index === "number" && e.index >= 0 && e.index < candidates.length
+      )
+      .map((e: { index: number; type: string; confidence?: number }) => ({
+        id: candidates[e.index].id,
+        type: e.type,
+        confidence: typeof e.confidence === "number" ? e.confidence : 0.5,
+      }));
+  } catch {
+    return [];
+  }
+}

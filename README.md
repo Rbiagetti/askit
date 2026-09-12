@@ -1,123 +1,183 @@
 # 🧠 Second Brain AI
 
-An intelligent, local-first, voice-enabled personal knowledge base and external memory. Built with Next.js 16 (App Router), React 19, SQLite, and powered by Groq LLM services (Llama-3.3-70b and Whisper-large-v3).
+Un secondo cervello personale, local-first e a comando vocale: parli, lui capisce, ricorda e
+ritrova. Next.js 16 (App Router), React 19, SQLite, Groq per LLM e trascrizione, embedding
+locali.
+
+**Costo di esercizio: 0 €/mese.** Le app commerciali equivalenti chiedono 20-35 €/mese.
 
 ---
 
-## 🚀 Key Features
+## 🚀 Cosa fa
 
-- **Local-First & SQLite-Backed**: All notes, relationships, entities, and memories are stored locally in a SQLite database (`secondbrain.db`) with WAL journal mode enabled for high performance.
-- **AI-Powered Memory Parsing**: Text input is automatically parsed using `Llama-3.3-70b-versatile` on Groq to extract structured attributes (importance, domain, entities, temporal metadata, and intent).
-- **Voice Transcription**: Record audio memories directly from the UI. Voice is captured in WebM format and transcribed instantly using Groq's `whisper-large-v3`.
-- **Hybrid Relevance Search & Q&A**: 
-  - *Retrieval*: Query memories using a hybrid of client-side TF-IDF similarity and LLM-synthesized context responses.
-  - *Ask Mode*: Converse with your personal external memory and receive concise, grounded answers.
-- **Smart Duplicate Detection**: Run local TF-IDF cosine-similarity calculations to group similar or duplicate memories and merge or clean them up in one click.
-- **Minimalist Nothing Phone Aesthetics**: Styled with a dark-mode, high-contrast, dot-grid layout reminiscent of Nothing Phone UI.
+- **Cattura vocale** — registri, `whisper-large-v3` su Groq trascrive, il testo viene
+  strutturato automaticamente (tipo, dominio, entità, data, importanza).
+- **Date relative risolte davvero** — «ricordami di chiamare Marco domani alle 18» diventa un
+  timestamp assoluto con fuso orario, e finisce nella vista calendario.
+- **Retrieval sul grafo** — la ricerca non manda mai tutte le note al modello: costruisce il
+  vicinato rilevante e spedisce solo quello. Il costo per operazione **non cresce** con il
+  numero di note (misurato: 252 token con 20 note, 253,6 con 200).
+- **Grafo della conoscenza** — le note si collegano fra loro per entità condivise, similarità
+  semantica e, opzionalmente, relazioni ragionate dal modello (`DUPLICATES`, `CONTINUES`,
+  `CONTRADICTS`, `RELATES_TO`).
+- **Mirror markdown per Obsidian** — ogni nota viene proiettata in un file `.md` con
+  frontmatter e `[[wikilink]]`, apribile come vault Obsidian con tanto di graph view.
+- **Estetica Nothing Phone** — dark mode ad alto contrasto, dot-grid.
 
 ---
 
-## 🛠️ Tech Stack & Architecture
+## 🏗️ Come funziona il retrieval
 
-- **Frontend**: React 19 (Hooks, custom swipe-to-delete behaviors, audio-recorder state), Tailwind CSS v4, Geist Mono font.
-- **Backend (API)**: Next.js 16 App Router.
-- **Database**: SQLite (`better-sqlite3`) with custom migrations and indexes.
-- **AI Orchestration**: Groq SDK for chat completions (Llama-3.3) and transcription (Whisper).
+Il punto centrale del progetto. Quattro generatori di candidati girano **in locale, a costo
+zero token**; solo i sopravvissuti alla fusione vedono l'LLM.
+
+```
+              query o nota nuova
+                      │
+      ┌───────────────┼───────────────┬───────────────┐
+      ▼               ▼               ▼               ▼
+ ① ancore        ② espansione     ③ kNN          ④ FTS5
+   entità          sul grafo       vettoriale      lessicale
+      │               │               │               │
+      └───────────────┴───────┬───────┴───────────────┘
+                              ▼
+                  fusione RRF · taglio a 12 nodi
+                              ▼
+                          prompt LLM
+```
+
+Ogni risultato porta la propria *provenance* (quale generatore l'ha trovato e a che rank), utile
+quando un risultato sorprende.
+
+---
+
+## 🛠️ Stack
+
+- **Frontend**: React 19, Tailwind CSS v4, Geist Mono
+- **Backend**: Next.js 16 App Router (route handlers)
+- **Database**: SQLite via `better-sqlite3`, con FTS5 per la ricerca lessicale
+- **LLM**: Groq SDK — `qwen/qwen3.6-27b` per parsing e ricerca, `openai/gpt-oss-120b` per il
+  linking ragionato (opzionale), `whisper-large-v3` per la trascrizione
+- **Embedding**: `@huggingface/transformers` in-process, modello
+  `Xenova/multilingual-e5-small` (384 dim, multilingue). Nessuna chiamata di rete, 0 token.
 
 ```
 second-brain/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── items/        # CRUD endpoints for memories (GET, PUT, PATCH, DELETE)
-│   │   │   ├── parse/        # Text analysis & parsing
-│   │   │   ├── search/       # Semantic embedding search (Pre-filtered)
-│   │   │   └── transcribe/   # Audio file processing
-│   │   ├── globals.css       # Nothing Phone dot-grid theme & custom keyframes
-│   │   ├── layout.tsx        # Base App wrapper
-│   │   └── page.tsx          # Main Single Page App (Input, list, search result, modals)
-│   ├── components/
-│   │   ├── MemoryCard.tsx    # Single memory card (swipe/long-press actions)
-│   │   ├── DuplicateModal.tsx
-│   │   ├── EditModal.tsx
-│   │   └── types.ts
+│   │   │   ├── items/        # CRUD memorie (GET, PUT, PATCH, DELETE)
+│   │   │   ├── parse/        # analisi, salvataggio, embedding, archi
+│   │   │   ├── search/       # retrieval sul grafo + risposta LLM
+│   │   │   ├── transcribe/   # audio -> testo
+│   │   │   └── vault/        # rigenerazione del mirror markdown
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   └── page.tsx
+│   ├── components/           # MemoryCard, EditModal, DuplicateModal, types
 │   └── lib/
-│       ├── db.ts             # SQLite helper and entity-linking logic
-│       ├── groq.ts           # LLM interaction methods
-│       ├── vector.ts         # cosine similarity (single source of truth)
-│       └── tfidf.ts          # Client-side TF-IDF tokenization & duplicate detection
-├── ingest_test.py            # Local bulk-import test script
-└── secondbrain.db            # Local SQLite database
+│       ├── db.ts             # SQLite, migrazioni, entità
+│       ├── embed.ts          # embedding locali (transformers.js)
+│       ├── graph.ts          # archi item<->item
+│       ├── groq.ts           # chiamate LLM
+│       ├── markdown.ts       # export vault Obsidian
+│       ├── retrieve.ts       # i 4 generatori + fusione RRF
+│       ├── tfidf.ts          # duplicati lato client
+│       └── vector.ts         # cosine similarity
+├── scripts/
+│   ├── backfill-embeddings.mjs
+│   ├── export-vault.mjs
+│   ├── rebuild-graph.mjs
+│   └── seed-synthetic.mjs    # corpus sintetico per i benchmark
+└── PIANO.md                  # progetto del refactor, con le misure
 ```
 
 ---
 
-## 💾 Database Schema
+## 💾 Schema
 
-The database consists of 5 main tables to support structured query, relational graphs, and vector-filtering:
-
-| Table | Purpose | Main Columns |
+| Tabella | Scopo | Colonne principali |
 | :--- | :--- | :--- |
-| **`items`** | Holds parsed memories | `id`, `content`, `raw_text`, `type`, `domain`, `importance`, `usage_count`, `time_ref`, timestamps |
-| **`entities`** | Extracted knowledge nodes | `id`, `name`, `normalized_name`, `type` (`place`, `person`, `concept`, `movie`) |
-| **`item_entities`** | M-N links between items and entities | `item_id`, `entity_id`, `confidence` |
-| **`edges`** | Relationships / Graph edges | `id`, `source_id`, `target_id`, `source_type`, `target_type`, `edge_type` |
-| **`embeddings`** | Semantic vectors for memories | `id`, `owner_id`, `owner_type`, `vector` (64-dim float array), `model` |
+| **`items`** | Le memorie | `id`, `content`, `raw_text`, `type`, `domain`, `importance`, `usage_count`, `time_ref` |
+| **`entities`** | Nodi entità | `id`, `name`, `normalized_name`, `type` |
+| **`item_entities`** | Legami M-N | `item_id`, `entity_id`, `confidence` |
+| **`edges`** | Archi del grafo | `source_id`, `target_id`, `edge_type`, `weight` — `MENTIONS`, `CO_OCCURS`, `SIMILAR_TO`, e i tipi ragionati |
+| **`embeddings`** | Vettori | `owner_id`, `vector` (384 float), `model`, `dim` |
+| **`items_fts`** | Indice FTS5 | tabella virtuale external-content su `items` |
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Avvio
 
-### 1. Prerequisites
-Ensure you have Node.js (v18+) and npm installed.
+### 1. Requisiti
+Node.js 18+ e npm.
 
-### 2. Environment Setup
-Create a `.env.local` file in the root directory and add your Groq API Key:
+### 2. Variabili d'ambiente
+Crea `.env.local`:
+
 ```env
-GROQ_API_KEY=your_groq_api_key_here
+GROQ_API_KEY=la_tua_chiave
+
+# opzionali
+SB_TIMEZONE=Europe/Rome           # fuso per risolvere le date relative
+VAULT_PATH=~/second-brain-vault   # dove generare il mirror markdown
+SB_REASONED_LINKING=0             # 1 per attivare gli archi ragionati (vedi sotto)
+SB_DB_PATH=                       # per puntare a un DB diverso (benchmark)
 ```
 
-### 3. Install Dependencies
+### 3. Installazione e avvio
+
 ```bash
 npm install
-```
-
-### 4. Running the App
-Start the development server:
-```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
 
----
+Al primo avvio il modello di embedding (~120 MB) viene scaricato una volta sola.
 
-## 🧪 Testing Ingestion
+### 4. Se hai già un database
 
-You can run the ingestion script to populate your database with dummy memories:
 ```bash
-python ingest_test.py
+npm run embeddings:backfill   # genera i vettori mancanti
+npm run graph:rebuild         # costruisce gli archi item<->item
+npm run vault:export          # genera la vault markdown (serve l'app avviata)
 ```
 
 ---
 
-## 🔍 Quality Control & Audit Summary
+## ⚙️ Limiti del free tier Groq
 
-A recent quality control audit was conducted on the project codebase, resulting in the following fixes and findings:
+| Limite | Valore | Conseguenza |
+| :--- | :--- | :--- |
+| Richieste/minuto | 30 | mai raggiunto in uso personale |
+| Token/minuto | 8.000 | il retrieval sul grafo tiene il contesto a ~250 token |
+| **Output token/minuto** | **1.000** | il più stringente: `max_tokens` è una *prenotazione* contro questo limite, non solo un tetto |
+| Token/giorno | 200.000 | ~135 operazioni al giorno |
 
-### 1. Fixed Critical React 19 & ESLint Errors
-- **Ref access during render**: In the `MemoryCard` component, the `isTouchDevice.current` reference was read directly in the render path. This has been resolved by converting it to a standard React `useState` hook (`isTouchDevice`), ensuring UI updates are correctly tracked.
-- **Synchronous setState in Effect**: In the `Home` component, `setTotalTokens` was being called synchronously inside `useEffect`. This was resolved by wrapping the invocation in a deferred `setTimeout` to avoid cascading render bottlenecks.
+Per questo `SB_REASONED_LINKING` è disattivato di default: i token di reasoning contano
+sull'OTPM, e il parsing di una nota ne prenota già 500. `CO_OCCURS` e `SIMILAR_TO` producono
+comunque un grafo utilizzabile a costo zero.
 
-### 2. Fixed `ingest_test.py` Ingestion Script Bug
-- The response keys returned by the `/api/parse` endpoint are top-level values (`type`, `domain`, `entities`). The python script was looking for a nested `"parsed"` object (i.e. `result.get("parsed")`), which resulted in `None | None | []` printed values.
-- In addition, the script expected the `entities` array to contain dictionaries with a `"name"` key. The API actually returns an array of strings. The script has been updated to parse the fields directly and output the correct strings.
+---
 
-### 3. Known limitations (tracked in `PIANO.md`)
-- **`/api/search`**'s embedding pre-filter is currently a stub: `getEmbedding()` asks the chat
-  model to hallucinate a 64-float "semantic fingerprint" rather than using a real embedding
-  model, so the vectors are not comparable across calls. Below 60 items the endpoint falls back
-  to sending the entire corpus to the LLM either way. See `PIANO.md` Fase 2 for the fix
-  (real local embeddings via transformers.js).
-- The `edges` table currently only holds `item → entity (MENTIONS)` links; there are no
-  item↔item edges yet, so graph traversal has nothing to traverse. See `PIANO.md` Fase 3.
-- The old `/api/ask` endpoint (dead code, never called by the UI) has been removed.
+## 📝 La vault markdown
+
+È un **mirror in sola lettura**: la fonte di verità è SQLite. Modificare un file a mano non ha
+effetto, viene sovrascritto al prossimo export. In cambio non c'è nessun sistema di
+sincronizzazione da mantenere, e ottieni portabilità, `git diff` leggibili e la graph view di
+Obsidian gratis.
+
+Le note vengono rispecchiate a ogni scrittura; `npm run vault:export` fa la rigenerazione
+completa. Puoi versionare la vault con un `git init` al suo interno, separato da questo repo.
+
+---
+
+## 🧪 Benchmark
+
+Il criterio di progetto è che il costo del retrieval non dipenda dalla dimensione del corpus:
+
+```bash
+sqlite3 secondbrain.db "VACUUM INTO '/tmp/bench.db'"
+SB_DB_PATH=/tmp/bench.db node scripts/seed-synthetic.mjs 200
+SB_DB_PATH=/tmp/bench.db node scripts/rebuild-graph.mjs
+# poi punta l'app a /tmp/bench.db e interroga /api/search con {"dryRun": true}
+```

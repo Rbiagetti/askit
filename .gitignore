@@ -47,3 +47,6 @@ next-env.d.ts
 
 # scripts
 ingest_test.py
+
+# markdown vault (dato personale, come il DB)
+/vault

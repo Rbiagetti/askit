@@ -4,7 +4,20 @@
 > Il contesto inviato deve dipendere dal **vicinato nel grafo**, non dalla dimensione totale del database.
 > Vincolo di progetto: restare dentro il free tier Groq (30 req/min, 8.000 token/min, 200.000 token/giorno).
 
-Data: 12 settembre 2026 · Stato: approvato in linea di principio, non ancora implementato
+Data: 12 settembre 2026 · Stato: **Fasi 0-5 implementate** sul branch `refactor/graph-retrieval`
+
+| Fase | Stato | Verifica |
+| :--- | :--- | :--- |
+| 0 · Pulizia | ✅ | `tsc --noEmit` pulito, 37 entità orfane rimosse |
+| 1 · Date + leak entità | ✅ | «domani alle 18» → `2026-09-13T18:00:00+02:00` |
+| 2 · Embedding reali | ✅ | 384 dim, deterministici, 8/8 item con vettore |
+| 3 · Grafo item↔item | ✅ | `SIMILAR_TO` su soglia adattiva; `DUPLICATES` a 0.95 |
+| 4 · Retrieval sul grafo | ✅ | **20 note → 252 tok · 200 note → 253,6 tok (+0,6%)** |
+| 5 · Mirror markdown | ✅ | 8 note + 11 stub entità, zero wikilink rotti |
+
+Tre correzioni rispetto al piano originale, tutte documentate sotto:
+soglia `SIMILAR_TO` adattiva anziché fissa (§Fase 3b), `PRAGMA user_version`
+anziché confronto di COUNT per l'FTS (§Fase 4), e il limite OTPM del free tier (§4).
 
 ---
 
@@ -457,18 +470,22 @@ poche righe leggibili, non un file riscritto da capo.
 
 ## 4. Budget token
 
-Stima per una ricerca, con 12 candidati da ~60 token l'uno:
+**Misurato** dopo l'implementazione (5 query, `dryRun`, DB sintetici):
 
-| Voce | Oggi (60 note) | Dopo |
+| Corpus | Token di contesto | Note inviate |
 |---|---|---|
-| Retrieval (embedding, FTS, traversata) | ~200 tok LLM finti | **0** (tutto locale) |
-| Contesto nel prompt | ~4.000 tok, in crescita | ~750 tok, **costante** |
-| System prompt + risposta | ~700 tok | ~700 tok |
-| **Totale per operazione** | **~4.900 tok** | **~1.450 tok** |
+| 20 note | 252 | 12 |
+| 200 note | **253,6** | 12 |
 
-Con 8.000 token/minuto: da ~1 operazione al minuto a ~5. Con 200.000 token/giorno: da ~40
-operazioni a ~135. E soprattutto quei numeri **non peggiorano** quando il corpus cresce, che è
-il punto vero — oggi a 300 note una singola ricerca sfonderebbe il limite al minuto da sola.
+Corpus 10×, costo +0,6%: il retrieval è disaccoppiato dalla dimensione del database.
+Prima, a 200 note ne sarebbero state inviate 40 e a 60 l'intero corpus.
+Il costo del retrieval in sé (embedding, FTS, traversata) è **0 token**: gira tutto in locale.
+
+> **Limite del free tier scoperto in corsa: OTPM = 1000 output token al minuto**, separato
+> dagli 8.000 TPM. E `max_tokens` è una **prenotazione** contro quel limite, non solo un tetto:
+> `searchWithLLM` chiedeva 2000 e ogni ricerca veniva rifiutata con 429 *prima di girare*.
+> Ora 900 per la ricerca, 500 per il parsing, 400 per il linking ragionato.
+> È anche il motivo per cui la Fase 3c è opt-in: i token di reasoning contano sull'OTPM.
 
 ---
 

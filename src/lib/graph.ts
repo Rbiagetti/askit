@@ -114,3 +114,46 @@ export function rebuildItemEdges(itemId: string, vector: number[]) {
   const similar = linkSimilar(itemId, vector);
   return { coOccurs, similar };
 }
+
+/** Relation types the model may assign. Anything else is discarded. */
+const REASONED_TYPES = ["RELATES_TO", "CONTINUES", "CONTRADICTS", "DUPLICATES"] as const;
+export type ReasonedType = (typeof REASONED_TYPES)[number];
+
+export interface ReasonedEdge {
+  targetId: string;
+  type: ReasonedType;
+  confidence: number;
+}
+
+/**
+ * Opt-in: the only place in the system where a model reasons about graph structure.
+ *
+ * OFF by default because of the free tier's 1000 output-tokens-per-minute ceiling —
+ * reasoning tokens count towards it, and parsing a note already reserves 500. Enable
+ * with SB_REASONED_LINKING=1 when the extra relation types are worth the budget.
+ * CO_OCCURS and SIMILAR_TO already produce a usable graph at zero cost.
+ *
+ * Runs strictly over candidates already shortlisted by retrieve() — never the corpus.
+ */
+export function isReasonedLinkingEnabled(): boolean {
+  return process.env.SB_REASONED_LINKING === "1";
+}
+
+export function saveReasonedEdges(itemId: string, edges: ReasonedEdge[]): number {
+  const db = getDb();
+  const upsert = db.prepare(
+    `INSERT INTO edges (id, source_id, target_id, source_type, target_type, edge_type, weight)
+     VALUES (?, ?, ?, 'item', 'item', ?, ?)
+     ON CONFLICT(source_id, target_id, edge_type) DO UPDATE SET weight = excluded.weight`
+  );
+  let written = 0;
+  db.transaction(() => {
+    for (const e of edges) {
+      if (!REASONED_TYPES.includes(e.type) || e.targetId === itemId) continue;
+      const [a, b] = itemId < e.targetId ? [itemId, e.targetId] : [e.targetId, itemId];
+      upsert.run(`${a}:${b}:${e.type}`, a, b, e.type, e.confidence);
+      written++;
+    }
+  })();
+  return written;
+}

@@ -9,7 +9,8 @@
     "lint": "eslint",
     "embeddings:backfill": "node scripts/backfill-embeddings.mjs",
     "graph:rebuild": "node scripts/rebuild-graph.mjs",
-    "bench:seed": "node scripts/seed-synthetic.mjs"
+    "bench:seed": "node scripts/seed-synthetic.mjs",
+    "vault:export": "node scripts/export-vault.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

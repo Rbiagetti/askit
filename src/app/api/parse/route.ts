@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseMemory } from "@/lib/groq";
+import { parseMemory, linkWithLLM } from "@/lib/groq";
 import { createItem, syncItemEntities, saveEmbedding } from "@/lib/db";
 import { embed, EMBED_MODEL } from "@/lib/embed";
-import { rebuildItemEdges } from "@/lib/graph";
+import {
+  rebuildItemEdges,
+  isReasonedLinkingEnabled,
+  saveReasonedEdges,
+  type ReasonedType,
+} from "@/lib/graph";
+import { retrieve } from "@/lib/retrieve";
+import { mirror } from "@/lib/markdown";
 
 export async function POST(req: NextRequest) {
   try {
@@ -29,7 +36,33 @@ export async function POST(req: NextRequest) {
     saveEmbedding(itemId, "item", vector, EMBED_MODEL);
     rebuildItemEdges(itemId, vector);
 
+    // Reasoned linking runs over the shortlist the retrieval already produced —
+    // never over the corpus. Opt-in: see isReasonedLinkingEnabled().
+    let reasoned = 0;
+    if (isReasonedLinkingEnabled()) {
+      try {
+        const neighbourhood = await retrieve(parsed.summary || text, { excludeId: itemId });
+        const links = await linkWithLLM(
+          parsed.summary || text,
+          neighbourhood.items.map((i) => ({ id: i.id, content: i.content }))
+        );
+        reasoned = saveReasonedEdges(
+          itemId,
+          links.map((l) => ({
+            targetId: l.id,
+            type: l.type as ReasonedType,
+            confidence: l.confidence,
+          }))
+        );
+      } catch {
+        // linking is an enhancement; never fail the save because of it
+      }
+    }
+
+    await mirror(itemId);
+
     return NextResponse.json({
+      reasonedLinks: reasoned,
       id: itemId,
       content: parsed.summary,
       text,
