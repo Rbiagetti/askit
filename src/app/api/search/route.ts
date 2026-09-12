@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchWithLLM, getEmbedding } from "@/lib/groq";
+import { searchWithLLM } from "@/lib/groq";
 import { cosineSimilarity } from "@/lib/vector";
-import { getAllItems, getAllEmbeddings } from "@/lib/db";
+import { getAllItems, getItemVectors } from "@/lib/db";
+import { embed, EMBED_MODEL } from "@/lib/embed";
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,9 +38,8 @@ export async function POST(req: NextRequest) {
     let top = rankedItems;
     if (allItems.length > 60) {
       try {
-        const queryEmbedding = await getEmbedding(query);
-        const allEmbeddings = getAllEmbeddings();
-        const embMap = new Map(allEmbeddings.map((e) => [e.owner_id, JSON.parse(e.vector)]));
+        const queryEmbedding = await embed(query, "query");
+        const embMap = new Map(getItemVectors(EMBED_MODEL).map((e) => [e.itemId, e.vector]));
         const scored = rankedItems.map((item) => {
           const vec = embMap.get(item.id);
           const score = vec ? cosineSimilarity(queryEmbedding, vec) : 0;

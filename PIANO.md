@@ -274,7 +274,21 @@ con `weight` = numero di entità condivise. È puro SQL, deterministico, gratis.
 
 **3b. Archi semantici, zero costo LLM**
 
-Creare `SIMILAR_TO` verso i top-3 vicini per cosine, se sopra soglia (~0.75), con `weight` = score.
+Creare `SIMILAR_TO` verso i top-3 vicini per cosine.
+
+> **Calibrazione misurata (Fase 2, 45 coppie di frasi eterogenee).** Una soglia assoluta qui
+> **non funziona** e la prima stesura di questo piano diceva 0.75, che è sbagliato.
+> `multilingual-e5-small` produce embedding in un cono stretto: tutte le similarità cadono in
+> **[0.808, 0.920]**, media 0.871, std 0.025 — anche fra testi totalmente scorrelati
+> («comprare latte e pane» vs «rivedere Interstellar» = 0.808). Con soglia 0.75 ogni nota
+> risulterebbe simile a ogni altra.
+>
+> Gli **z-score** invece separano correttamente: parafrasi z=+1.95, scorrelato z=−2.56.
+> Quindi la soglia è **adattiva**: per ogni item si calcola media e deviazione standard delle sue
+> similarità verso tutto il corpus, e si tengono i vicini con **z ≥ 1.5**, comunque al massimo 3.
+> Sotto ~5 item nel corpus la statistica non è affidabile e `SIMILAR_TO` va semplicemente saltato.
+>
+> Questo non tocca la Fase 4: RRF è rank-based e non usa valori assoluti.
 
 **3c. Archi ragionati, costo LLM controllato**
 

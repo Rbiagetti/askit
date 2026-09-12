@@ -76,11 +76,20 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_items_domain ON items(domain);
   `);
 
-  // Safe migration for existing DBs
-  try {
-    db.exec("ALTER TABLE items ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0");
-  } catch {
-    // Column already exists — ignore
+  // Safe migrations for existing DBs — each guarded, "duplicate column" is expected
+  const migrations = [
+    "ALTER TABLE items ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0",
+    // dim lets us invalidate every vector in bulk if the embedding model changes
+    "ALTER TABLE embeddings ADD COLUMN dim INTEGER",
+    // traversal goes both ways: entity -> items, not just item -> entities
+    "CREATE INDEX IF NOT EXISTS idx_item_entities_entity ON item_entities(entity_id)",
+  ];
+  for (const sql of migrations) {
+    try {
+      db.exec(sql);
+    } catch {
+      // already applied
+    }
   }
 }
 
@@ -151,13 +160,49 @@ export function createEdge(data: {
   return id;
 }
 
-export function saveEmbedding(ownerId: string, ownerType: string, vector: number[], model: string) {
+/** Writes (or replaces) the embedding for an owner. One vector per owner. */
+export function saveEmbedding(
+  ownerId: string,
+  ownerType: string,
+  vector: number[],
+  model: string
+) {
   const db = getDb();
   const id = uuid();
-  db.prepare(
-    "INSERT INTO embeddings (id, owner_id, owner_type, vector, model) VALUES (?, ?, ?, ?, ?)"
-  ).run(id, ownerId, ownerType, JSON.stringify(vector), model);
+  const run = db.transaction(() => {
+    db.prepare("DELETE FROM embeddings WHERE owner_id = ? AND owner_type = ?").run(
+      ownerId,
+      ownerType
+    );
+    db.prepare(
+      "INSERT INTO embeddings (id, owner_id, owner_type, vector, model, dim) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(id, ownerId, ownerType, JSON.stringify(vector), model, vector.length);
+  });
+  run();
   return id;
+}
+
+/** All item vectors, deserialised and filtered to the current model. */
+export function getItemVectors(model: string): Array<{ itemId: string; vector: number[] }> {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT owner_id, vector FROM embeddings WHERE owner_type = 'item' AND model = ?")
+    .all(model) as Array<{ owner_id: string; vector: string }>;
+  return rows.map((r) => ({ itemId: r.owner_id, vector: JSON.parse(r.vector) as number[] }));
+}
+
+/** Ids of items that have no vector for the given model (used by the backfill). */
+export function getItemsMissingEmbedding(model: string): Array<{ id: string; text: string }> {
+  const db = getDb();
+  return db
+    .prepare(
+      `SELECT i.id, COALESCE(i.content, i.raw_text) AS text
+       FROM items i
+       LEFT JOIN embeddings e
+         ON e.owner_id = i.id AND e.owner_type = 'item' AND e.model = ?
+       WHERE e.id IS NULL`
+    )
+    .all(model) as Array<{ id: string; text: string }>;
 }
 
 export function getAllItems() {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllItems, deleteItem, getDb, syncItemEntities } from "@/lib/db";
+import { getAllItems, deleteItem, getDb, syncItemEntities, saveEmbedding } from "@/lib/db";
 import { parseMemory } from "@/lib/groq";
+import { embed, EMBED_MODEL } from "@/lib/embed";
 
 export async function GET() {
   try {
@@ -80,6 +81,10 @@ export async function PUT(req: NextRequest) {
            parsed.time.datetime || null, parsed.time.confidence, id);
 
     const entityNames = syncItemEntities(id, parsed.entities);
+
+    // the text changed, so the stored vector is stale
+    const vector = await embed(parsed.summary || text, "passage");
+    saveEmbedding(id, "item", vector, EMBED_MODEL);
 
     return NextResponse.json({
       id, content: parsed.summary, text,

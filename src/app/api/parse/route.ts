@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseMemory } from "@/lib/groq";
-import { createItem, syncItemEntities } from "@/lib/db";
+import { createItem, syncItemEntities, saveEmbedding } from "@/lib/db";
+import { embed, EMBED_MODEL } from "@/lib/embed";
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,6 +23,9 @@ export async function POST(req: NextRequest) {
     });
 
     const entityNames = syncItemEntities(itemId, parsed.entities);
+
+    const vector = await embed(parsed.summary || text, "passage");
+    saveEmbedding(itemId, "item", vector, EMBED_MODEL);
 
     return NextResponse.json({
       id: itemId,

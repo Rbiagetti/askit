@@ -60,7 +60,10 @@ export async function parseMemory(text: string, now: Date = new Date()): Promise
       { role: "user", content: `${temporalContext(now)}\n\nInput:\n${text}` },
     ],
     temperature: 0.1,
-    max_tokens: 1000,
+    // max_tokens is a reservation against the free tier's 1000 output-tokens-per-minute
+    // limit, not just a cap: asking for more than needed throttles the whole app.
+    // A parsed memory is ~150-250 tokens of JSON.
+    max_tokens: 500,
     response_format: { type: "json_object" },
     reasoning_effort: "none",
   });
@@ -122,7 +125,9 @@ export async function searchWithLLM(
       },
     ],
     temperature: 0.2,
-    max_tokens: 2000,
+    // 2000 exceeded the free tier's 1000 OTPM limit outright: every search returned
+    // 429 "Request too large ... on output tokens per minute" without ever running.
+    max_tokens: 900,
     response_format: { type: "json_object" },
     reasoning_effort: "none",
   });
@@ -142,30 +147,6 @@ export async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
   return transcription.text;
 }
 
-export async function getEmbedding(text: string): Promise<number[]> {
-  const completion = await groq.chat.completions.create({
-    model: "qwen/qwen3.6-27b",
-    messages: [
-      {
-        role: "system",
-        content:
-          "Generate a semantic fingerprint of the following text as a JSON array of exactly 64 floating point numbers between -1 and 1 that capture the meaning. Respond ONLY with the JSON array.",
-      },
-      { role: "user", content: text },
-    ],
-    temperature: 0,
-    max_tokens: 500,
-    response_format: { type: "json_object" },
-    reasoning_effort: "none",
-  });
-
-  const raw = completion.choices[0]?.message?.content || "[]";
-  try {
-    const parsed = JSON.parse(raw);
-    const arr = parsed.embedding || parsed.vector || parsed;
-    if (Array.isArray(arr) && arr.length > 0) return arr;
-  } catch {
-    // fallback
-  }
-  return Array.from({ length: 64 }, () => Math.random() * 2 - 1);
-}
+// getEmbedding() lived here and asked the chat model to invent a 64-float
+// "semantic fingerprint", falling back to Math.random(). It has been replaced by
+// real local embeddings — see lib/embed.ts and PIANO.md §1.2.
