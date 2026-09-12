@@ -13,12 +13,19 @@ import { mirror } from "@/lib/markdown";
 
 export async function POST(req: NextRequest) {
   try {
-    const { text } = await req.json();
+    const { text, force } = await req.json();
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "text is required" }, { status: 400 });
     }
 
     const parsed = await parseMemory(text);
+
+    // A question ("explore") gets routed to search instead of becoming a note.
+    // `force: "save"` lets the user override that (e.g. "salva comunque come nota").
+    // No extra LLM call: this reuses the intent parseMemory already returned above.
+    if (parsed.intent === "explore" && force !== "save") {
+      return NextResponse.json({ routed: "search", parsed });
+    }
 
     const itemId = createItem({
       content: parsed.summary,
@@ -62,6 +69,7 @@ export async function POST(req: NextRequest) {
     await mirror(itemId);
 
     return NextResponse.json({
+      routed: "save",
       reasonedLinks: reasoned,
       id: itemId,
       content: parsed.summary,
