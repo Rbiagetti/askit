@@ -13,7 +13,6 @@
     "vault:export": "node scripts/export-vault.mjs"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
     "@libsql/client": "^0.18.0",
     "better-sqlite3": "^12.9.0",
     "groq-sdk": "^1.1.2",

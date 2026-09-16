@@ -9,16 +9,50 @@
  * not parse quality, and 200 LLM calls would blow the free tier.
  */
 import Database from "better-sqlite3";
-import { pipeline } from "@huggingface/transformers";
+import fs from "node:fs";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-const EMBED_MODEL = "Xenova/multilingual-e5-small";
+for (const line of fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8").split("\n")) {
+  const m = line.match(/^([A-Z_]+)=(.*)$/);
+  if (m) process.env[m[1]] ??= m[2];
+}
+const API_KEY = process.env.GEMINI_API_KEY;
+
+const GEMINI_MODEL = "gemini-embedding-001";
+const EMBED_DIM = 768;
+const EMBED_MODEL = `gemini/${GEMINI_MODEL}@${EMBED_DIM}`;
 const DB_PATH = process.env.SB_DB_PATH;
 const COUNT = Number(process.argv[2] || 200);
 
 if (!DB_PATH || DB_PATH.endsWith("secondbrain.db")) {
   console.error("Set SB_DB_PATH to a throwaway database (not secondbrain.db).");
   process.exit(1);
+}
+if (!API_KEY) {
+  console.error("GEMINI_API_KEY mancante in .env.local");
+  process.exit(1);
+}
+
+async function embedBatch(texts) {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:batchEmbedContents`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": API_KEY },
+      body: JSON.stringify({
+        requests: texts.map((t) => ({
+          model: `models/${GEMINI_MODEL}`,
+          content: { parts: [{ text: t.replace(/\s+/g, " ").trim() }] },
+          taskType: "RETRIEVAL_DOCUMENT",
+          outputDimensionality: EMBED_DIM,
+        })),
+      }),
+    }
+  );
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  return data.embeddings.map((e) => e.values);
 }
 
 const PEOPLE = ["Emma", "Marco", "Giulia", "Luca", "Sofia", "Andrea", "Chiara", "Matteo"];
@@ -51,16 +85,12 @@ for (let i = 0; i < COUNT; i++) {
   rows.push({ id: randomUUID(), text: `${text} (#${i})`, type, domain });
 }
 
-console.log(`Embedding ${rows.length} synthetic notes...`);
-const extract = await pipeline("feature-extraction", EMBED_MODEL);
+console.log(`Embedding ${rows.length} synthetic notes via Gemini (${GEMINI_MODEL})...`);
 const vectors = [];
-for (let i = 0; i < rows.length; i += 32) {
-  const slice = rows.slice(i, i + 32);
-  const out = await extract(slice.map((r) => `passage: ${r.text}`), {
-    pooling: "mean",
-    normalize: true,
-  });
-  vectors.push(...out.tolist());
+for (let i = 0; i < rows.length; i += 16) {
+  const slice = rows.slice(i, i + 16);
+  vectors.push(...(await embedBatch(slice.map((r) => r.text))));
+  console.log(`  ${Math.min(i + 16, rows.length)}/${rows.length}`);
 }
 
 const insItem = db.prepare(

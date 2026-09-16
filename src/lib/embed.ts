@@ -1,59 +1,66 @@
 /**
- * Local text embeddings — no API, no tokens, no network at runtime.
+ * Text embeddings via the Gemini embeddings API — no local model, no native
+ * binaries, no cold-start model loading.
  *
- * Replaces the previous getEmbedding() in lib/groq.ts, which asked a chat model
- * to invent "64 floats capturing the meaning". A generative model cannot produce
- * coherent embeddings that way: the numbers were not comparable across calls,
- * and the error path returned Math.random(). See PIANO.md §1.2.
+ * History: the first version used transformers.js + onnxruntime-node running
+ * locally. That worked, but onnxruntime-node dlopen()s a native shared library
+ * that Next's static file-tracing can't see, which turned deploying to Vercel
+ * into a multi-day fight against a 12-serverless-functions-per-deployment cap
+ * (see PIANO.md §9) — and even once "fixed", every cold instance re-downloaded
+ * ~120MB and took 10-15s before serving its first request. Gemini's embedding
+ * API removes the problem at the root: no native dependency to bundle, no
+ * model to load, and Groq (already in use for parsing/search) has no
+ * embeddings endpoint at all — verified directly against the API, not assumed.
  *
- * Model: multilingual-e5-small (384 dims). Multilingual is not optional here —
- * notes are written in Italian and English-only models degrade badly on them.
+ * Every request/response shape below (endpoint, field names, batch endpoint,
+ * the outputDimensionality/taskType quirk) was verified against the real API
+ * with a real key before writing this, not copied from the docs unchecked —
+ * the docs recommend `embedContentConfig.outputDimensionality`, but nested
+ * that way it's silently ignored; only the flat top-level field works.
  */
-import { pipeline, env, type FeatureExtractionPipeline } from "@huggingface/transformers";
-import os from "node:os";
-import path from "node:path";
 
-export const EMBED_MODEL = "Xenova/multilingual-e5-small";
-export const EMBED_DIM = 384;
+const API_KEY = process.env.GEMINI_API_KEY;
+const MODEL = "gemini-embedding-001";
+const BASE_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}`;
 
-// Vercel's deployment bundle (/var/task) is read-only; transformers.js's default
-// cache directory lives inside node_modules, which is part of that bundle. Found
-// by deploying, not from docs: "ENOENT: no such file or directory, mkdir
-// '/var/task/node_modules/@huggingface/transformers/.cache'". os.tmpdir() (/tmp
-// on Vercel) is the one writable path — ephemeral per instance, which is fine:
-// a cold start re-downloads the model once, warm instances reuse it.
-env.cacheDir = path.join(os.tmpdir(), "transformers-cache");
-
-let extractor: Promise<FeatureExtractionPipeline> | null = null;
+export const EMBED_MODEL = `gemini/${MODEL}@768`;
+export const EMBED_DIM = 768;
 
 /**
- * Loads the model once per process; ~120MB, cached on disk after first run.
- *
- * On Vercel: the native Node backend (onnxruntime-node, the only backend
- * transformers.js's Node build actually supports — "wasm" throws
- * "Unsupported device", it's browser-only there) dlopen()s a shared library
- * (libonnxruntime.so.1) at runtime instead of require()-ing it, so Next's
- * static file-tracing never sees the dependency. See next.config.ts for the
- * bundling story and PIANO.md §9 for the full account of what was tried.
+ * Asymmetric task type, Gemini's equivalent of E5's query:/passage: prefixes:
+ * stored text is a "document" to be found, the thing you search with is a
+ * "query" — using the matching task type meaningfully improves retrieval
+ * quality over treating both the same way.
  */
-function getExtractor(): Promise<FeatureExtractionPipeline> {
-  if (!extractor) {
-    extractor = pipeline("feature-extraction", EMBED_MODEL);
-  }
-  return extractor;
+function taskType(kind: "query" | "passage"): string {
+  return kind === "query" ? "RETRIEVAL_QUERY" : "RETRIEVAL_DOCUMENT";
 }
 
-/**
- * E5 models require an asymmetric prefix and are meaningfully worse without it:
- * stored text is a "passage", the thing you search with is a "query".
- */
-function withPrefix(text: string, kind: "query" | "passage"): string {
-  return `${kind}: ${text.replace(/\s+/g, " ").trim()}`;
+function clean(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+async function callApi(path: string, body: unknown): Promise<unknown> {
+  if (!API_KEY) throw new Error("GEMINI_API_KEY non impostata");
+  const res = await fetch(`${BASE_URL}:${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": API_KEY },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Gemini embeddings ${res.status}: ${detail.slice(0, 300)}`);
+  }
+  return res.json();
 }
 
 export async function embed(text: string, kind: "query" | "passage"): Promise<number[]> {
-  const [vec] = await embedBatch([text], kind);
-  return vec;
+  const data = (await callApi("embedContent", {
+    content: { parts: [{ text: clean(text) }] },
+    taskType: taskType(kind),
+    outputDimensionality: EMBED_DIM,
+  })) as { embedding: { values: number[] } };
+  return data.embedding.values;
 }
 
 export async function embedBatch(
@@ -61,11 +68,14 @@ export async function embedBatch(
   kind: "query" | "passage"
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const extract = await getExtractor();
-  const output = await extract(
-    texts.map((t) => withPrefix(t, kind)),
-    { pooling: "mean", normalize: true }
-  );
-  // tolist() gives [batch][dim]; vectors are already L2-normalised
-  return output.tolist() as number[][];
+  const requests = texts.map((t) => ({
+    model: `models/${MODEL}`,
+    content: { parts: [{ text: clean(t) }] },
+    taskType: taskType(kind),
+    outputDimensionality: EMBED_DIM,
+  }));
+  const data = (await callApi("batchEmbedContents", { requests })) as {
+    embeddings: Array<{ values: number[] }>;
+  };
+  return data.embeddings.map((e) => e.values);
 }
