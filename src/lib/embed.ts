@@ -19,22 +19,12 @@ let extractor: Promise<FeatureExtractionPipeline> | null = null;
 /**
  * Loads the model once per process; ~120MB, cached on disk after first run.
  *
- * TODO(deploy/Vercel): on serverless this cache does not survive between cold
- * starts — each new instance re-downloads ~120MB from the Hugging Face hub
- * before it can serve its first request. Not fixed here (out of scope for the
- * Turso migration); the fix, when needed:
- *   1. `npx @huggingface/transformers-cli download Xenova/multilingual-e5-small`
- *      (or an equivalent download script) into a repo folder, e.g. `models/`,
- *      as a `postinstall`/prebuild step so Vercel's build includes the weights.
- *   2. At the top of this file, before the first `pipeline()` call:
- *        import { env } from "@huggingface/transformers";
- *        env.allowRemoteModels = false;
- *        env.localModelPath = path.join(process.cwd(), "models");
- *   3. Confirm the folder isn't excluded by `.vercelignore`/`.gitignore`, and
- *      that it fits Vercel's deployment size limits (~120MB should be fine).
- * Until this is done, expect slow (10-20s+) cold starts on Vercel for the
- * first request per instance; subsequent requests on the same warm instance
- * are unaffected since `extractor` is memoized per process.
+ * On Vercel: the native Node backend (onnxruntime-node, the only backend
+ * transformers.js's Node build actually supports — "wasm" throws
+ * "Unsupported device", it's browser-only there) dlopen()s a shared library
+ * (libonnxruntime.so.1) at runtime instead of require()-ing it, so Next's
+ * static file-tracing never sees the dependency. See next.config.ts for the
+ * bundling story and PIANO.md §9 for the full account of what was tried.
  */
 function getExtractor(): Promise<FeatureExtractionPipeline> {
   if (!extractor) {
