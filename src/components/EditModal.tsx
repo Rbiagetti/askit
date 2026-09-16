@@ -45,7 +45,9 @@ export default function EditModal({
             onChange={(e) => setText(e.target.value)}
             rows={4}
             autoFocus
-            className="w-full resize-none text-sm focus:outline-none"
+            // 16px minimo: sotto questa soglia iOS Safari zooma la pagina al
+            // focus dell'input, e lo zoom resta anche dopo aver chiuso il modale.
+            className="w-full resize-none text-[16px] focus:outline-none"
             style={{
               background: "var(--bg-input)",
               border: "1px solid var(--border-focus)",

@@ -7,6 +7,16 @@ import { useState, useRef, useCallback, useEffect } from "react";
 // it entirely instead of trying to out-time the OS. Above it (desktop-ish,
 // mouse-driven), hover reveals the action bar, so this never matters there.
 const MOBILE_BREAKPOINT = 640;
+
+// Delete is destructive and irreversible, edit isn't — so they don't share a
+// threshold. 60px (roughly a light flick) turned out to delete real notes by
+// accident, reported by the user. Deleting now needs a swipe that travels
+// most of the card's width and is held there at release — hard to do without
+// meaning to, easy to do on purpose. Edit keeps the old, lighter threshold.
+const DELETE_MAX_DRAG = 220;
+const DELETE_ARM_THRESHOLD = 170;
+const EDIT_MAX_DRAG = 100;
+const EDIT_THRESHOLD = 60;
 import { Memory } from "./types";
 
 const TYPE_ICONS: Record<string, string> = {
@@ -62,6 +72,7 @@ export default function MemoryCard({
   const isHorizontal = useRef(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didLongPress = useRef(false);
+  const armedHaptic = useRef(false);
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -89,6 +100,7 @@ export default function MemoryCard({
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     isHorizontal.current = false;
     didLongPress.current = false;
+    armedHaptic.current = false;
 
     // On narrow screens, tap-and-hold fights the OS's own text-selection
     // gesture — skip it entirely there, swipe both ways covers the same
@@ -120,10 +132,19 @@ export default function MemoryCard({
       // Mobile gets both directions: left deletes, right edits.
       if (dx < 0) {
         setActivelySwiping(true);
-        setSwipeX(Math.max(dx, -100));
+        const clamped = Math.max(dx, -DELETE_MAX_DRAG);
+        setSwipeX(clamped);
+        // One buzz the moment it crosses into "this will actually delete"
+        // territory — confirms the commitment before release, not after.
+        if (clamped <= -DELETE_ARM_THRESHOLD && !armedHaptic.current) {
+          armedHaptic.current = true;
+          if (navigator.vibrate) navigator.vibrate(15);
+        } else if (clamped > -DELETE_ARM_THRESHOLD) {
+          armedHaptic.current = false;
+        }
       } else if (isMobile && dx > 0) {
         setActivelySwiping(true);
-        setSwipeX(Math.min(dx, 100));
+        setSwipeX(Math.min(dx, EDIT_MAX_DRAG));
       }
     }
   };
@@ -132,9 +153,9 @@ export default function MemoryCard({
     cancelLongPress();
     setActivelySwiping(false);
     if (didLongPress.current) return;
-    if (swipeX < -60) {
+    if (swipeX <= -DELETE_ARM_THRESHOLD) {
       doDelete();
-    } else if (isMobile && swipeX > 60) {
+    } else if (isMobile && swipeX > EDIT_THRESHOLD) {
       setSwipeX(0);
       onEdit(memory);
     } else {
@@ -144,7 +165,9 @@ export default function MemoryCard({
 
   const showActions = actionsOpen || (!isTouchDevice && hovered);
   const color = DOMAIN_COLOR[memory.domain] || DOMAIN_COLOR.general;
-  const swipeProgress = Math.min(Math.abs(swipeX) / 60, 1);
+  const deleteArmed = swipeX <= -DELETE_ARM_THRESHOLD;
+  const deleteProgress = Math.min(Math.abs(Math.min(swipeX, 0)) / DELETE_ARM_THRESHOLD, 1);
+  const editProgress = Math.min(Math.max(swipeX, 0) / EDIT_THRESHOLD, 1);
 
   if (leaving) return <div style={{ maxHeight: 0, opacity: 0, overflow: "hidden", transition: "all 0.25s" }} />;
 
@@ -154,17 +177,19 @@ export default function MemoryCard({
       <div
         className="absolute inset-0 flex items-center justify-end pr-5"
         style={{
-          background: `rgba(255,59,48,${swipeProgress * 0.9})`,
+          background: `rgba(255,59,48,${deleteProgress * 0.9})`,
           visibility: swipeX < -8 ? "visible" : "hidden",
         }}
       >
-        <span className="text-white text-[11px] tracking-widest uppercase font-mono">elimina</span>
+        <span className="text-white text-[11px] tracking-widest uppercase font-mono">
+          {deleteArmed ? "rilascia per eliminare" : "elimina"}
+        </span>
       </div>
       {isMobile && (
         <div
           className="absolute inset-0 flex items-center justify-start pl-5"
           style={{
-            background: `rgba(255,255,255,${swipeProgress * 0.14})`,
+            background: `rgba(255,255,255,${editProgress * 0.14})`,
             visibility: swipeX > 8 ? "visible" : "hidden",
           }}
         >

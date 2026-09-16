@@ -488,7 +488,8 @@ export default function Home() {
                   : "Fai una domanda alle tue memorie o cerca..."
               }
               rows={2}
-              className="flex-1 resize-none text-sm focus:outline-none transition-colors"
+              // 16px minimo: sotto questa soglia iOS Safari zooma la pagina al focus
+              className="flex-1 resize-none text-[16px] focus:outline-none transition-colors"
               style={{
                 background: "var(--bg-input)",
                 border: `1px solid ${input ? "var(--border-focus)" : "var(--border)"}`,
