@@ -13,11 +13,18 @@ const nextConfig: NextConfig = {
   // Found by deploying to Vercel, not from docs: onnxruntime-node dlopen()s its
   // native library (libonnxruntime.so.1) at runtime instead of require()-ing it,
   // so Next's static file-tracing never sees the dependency and leaves it out of
-  // the serverless function bundle — every route that embeds text (parse, items,
-  // items/[id], search, reindex, reanalyze) failed with "cannot open shared
-  // object file". Forcing inclusion of the whole platform-binaries folder fixes it.
+  // the serverless function bundle. A first attempt included the whole
+  // onnxruntime-node/bin/** tree (every platform: linux/win32/darwin x64/arm64)
+  // under the broad "/api/**" key and hit Vercel's Hobby-plan 12-function-per-
+  // deployment cap — scoping to the exact routes that use lib/embed.ts (directly
+  // or via lib/retrieve.ts / lib/graph.ts) and to Linux only (Vercel's actual
+  // runtime) avoids both problems.
   outputFileTracingIncludes: {
-    "/api/**": ["./node_modules/onnxruntime-node/bin/**"],
+    "/api/parse": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
+    "/api/items": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
+    "/api/search": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
+    "/api/reindex": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
+    "/api/reanalyze": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
   },
 };
 
