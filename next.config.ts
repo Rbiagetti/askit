@@ -12,17 +12,18 @@ const nextConfig: NextConfig = {
   //
   // onnxruntime-node dlopen()s its native library (libonnxruntime.so.1) at
   // runtime instead of require()-ing it, so Next's static file-tracing never
-  // sees the dependency on its own — that's why it's listed above explicitly,
-  // same as better-sqlite3. Two follow-up attempts at also adding
-  // outputFileTracingIncludes (first broadly for "/api/**", then scoped to the
-  // 5 routes that actually use it) both failed the build outright with
-  // "exceeded_serverless_functions_per_deployment" (Hobby's 12-function cap) —
-  // each outputFileTracingIncludes key appears to force its route out of
-  // Next's normal function bundling into its own separate function, which
-  // this app's 9 base routes cannot afford even 3-4 of. serverExternalPackages
-  // alone (below) already makes Next copy the whole onnxruntime-node package
-  // verbatim, .so included, exactly as it does for better-sqlite3 — no
-  // additional tracing directive needed.
+  // sees the dependency — serverExternalPackages alone does NOT copy it
+  // (confirmed: still "cannot open shared object file" on Vercel with only
+  // the entry above, no outputFileTracingIncludes). Per-route
+  // outputFileTracingIncludes keys (tried both "/api/**" and 5 exact routes)
+  // each seem to force their route out of Next's shared function bundling
+  // into its own function, hitting Hobby's 12-function-per-deployment cap
+  // with only 9 base routes. Next's own docs list a single global "/*" key as
+  // the intended pattern for exactly this case (native/runtime binaries like
+  // sharp, aws-crt) — one entry, not one per route.
+  outputFileTracingIncludes: {
+    "/*": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
+  },
 };
 
 export default nextConfig;
