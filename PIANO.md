@@ -147,6 +147,47 @@ paga quindi una sola volta, indipendentemente da dove poi si decide di ospitare 
   del progetto Vercel per il deploy — sono credenziali, non passano per la chat.
 - Account Vercel (probabilmente già collegato a questa sessione via MCP) per il deploy vero.
 
+### 9.8 Esito finale (12 settembre 2026, sera)
+
+Deploy completato e verificato su https://second-brain-rbiagettis-projects.vercel.app
+(protetto da Vercel Authentication, come scelto). Percorso reale, non quello previsto
+a tavolino:
+
+1. **`PRAGMA journal_mode = WAL`** rifiutata da Turso ("SQL not allowed statement"),
+   dentro un blocco che si ferma al primo errore → bloccava silenziosamente la
+   creazione di ogni tabella. Spostata fuori, condizionata a `url.startsWith("file:")`.
+2. **Modello Groq ritirato**: `qwen/qwen3.6-27b` non esisteva più, sostituito con
+   `qwen/qwen3.8-27b` — i modelli preview di Groq cambiano id senza preavviso.
+3. **Regione GitHub App / permessi del connettore Vercel**: due cause distinte di
+   403 "You don't have permission to create the project", risolte separatamente
+   (autorizzazione repo su GitHub, poi riconnessione del connettore Vercel).
+4. **`libonnxruntime.so.1` mancante**: onnxruntime-node (motore di transformers.js)
+   fa `dlopen()` della sua libreria nativa a runtime, invisibile al file-tracing
+   statico di Next — `serverExternalPackages` da solo non basta.
+5. **`outputFileTracingIncludes` sfora il tetto di 12 funzioni di Vercel Hobby**:
+   ogni route toccata dalla regola sembra costare funzioni aggiuntive in modo non
+   lineare (base 2 → 4 con 1 route → 10 con 3 route → sfora con 5). Soluzione
+   temporanea: limitato a 3 route (parse/items/search), reindex/reanalyze rotte.
+6. **Cache di transformers.js su `node_modules/` di sola lettura** — spostata su
+   `os.tmpdir()`.
+7. **Lentezza segnalata dall'utente**: regione Vercel (Washington) e Turso
+   (Dublino) disallineate — ogni query attraversava l'Atlantico — più
+   `retrieve()` che awaitava in sequenza query indipendenti. Fix:
+   `vercel.json` con `regions: ["dub1"]` + `Promise.all` in `retrieve()`.
+8. **Svolta finale**: sostituiti gli embedding locali (transformers.js +
+   onnxruntime-node) con la **Gemini embeddings API**
+   (`gemini-embedding-001`, 768 dim via `outputDimensionality`, `taskType`
+   `RETRIEVAL_DOCUMENT`/`RETRIEVAL_QUERY` come equivalente dei prefissi E5).
+   Elimina i punti 4-6 alla radice: niente più binario nativo, niente più
+   cold-start del modello, niente più tetto di funzioni — `reindex` e
+   `reanalyze` di nuovo funzionanti su Vercel. Verificato che Groq **non**
+   ha un endpoint di embedding (una ricerca web l'aveva erroneamente
+   affermato, smentito contro l'API reale) prima di scegliere Gemini.
+
+Ogni dettaglio tecnico sopra (endpoint, formati, il bug di `outputDimensionality`
+ignorato dentro `embedContentConfig`) è stato verificato contro le API reali con
+chiavi vere prima di scrivere codice, non assunto dalla documentazione.
+
 ### 9.7 Verifica prevista
 
 Il refactor va provato **in locale senza credenziali Turso** (modalità file, vedi §9.3) come
