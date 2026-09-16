@@ -9,23 +9,20 @@ const nextConfig: NextConfig = {
   // is NOT in that default list and needs it: without it, Turbopack tries to
   // bundle the package instead of leaving it as plain node_modules on disk.
   serverExternalPackages: ["better-sqlite3", "@libsql/client", "onnxruntime-node"],
-
-  // Found by deploying to Vercel, not from docs: onnxruntime-node dlopen()s its
-  // native library (libonnxruntime.so.1) at runtime instead of require()-ing it,
-  // so Next's static file-tracing never sees the dependency and leaves it out of
-  // the serverless function bundle. A first attempt included the whole
-  // onnxruntime-node/bin/** tree (every platform: linux/win32/darwin x64/arm64)
-  // under the broad "/api/**" key and hit Vercel's Hobby-plan 12-function-per-
-  // deployment cap — scoping to the exact routes that use lib/embed.ts (directly
-  // or via lib/retrieve.ts / lib/graph.ts) and to Linux only (Vercel's actual
-  // runtime) avoids both problems.
-  outputFileTracingIncludes: {
-    "/api/parse": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
-    "/api/items": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
-    "/api/search": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
-    "/api/reindex": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
-    "/api/reanalyze": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/**"],
-  },
+  //
+  // onnxruntime-node dlopen()s its native library (libonnxruntime.so.1) at
+  // runtime instead of require()-ing it, so Next's static file-tracing never
+  // sees the dependency on its own — that's why it's listed above explicitly,
+  // same as better-sqlite3. Two follow-up attempts at also adding
+  // outputFileTracingIncludes (first broadly for "/api/**", then scoped to the
+  // 5 routes that actually use it) both failed the build outright with
+  // "exceeded_serverless_functions_per_deployment" (Hobby's 12-function cap) —
+  // each outputFileTracingIncludes key appears to force its route out of
+  // Next's normal function bundling into its own separate function, which
+  // this app's 9 base routes cannot afford even 3-4 of. serverExternalPackages
+  // alone (below) already makes Next copy the whole onnxruntime-node package
+  // verbatim, .so included, exactly as it does for better-sqlite3 — no
+  // additional tracing directive needed.
 };
 
 export default nextConfig;
