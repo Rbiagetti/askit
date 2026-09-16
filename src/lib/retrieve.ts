@@ -201,12 +201,19 @@ export async function retrieve(
   const { limit = DEFAULT_LIMIT, hops = 2, excludeId } = opts;
   const db = await getDb();
 
-  const anchors = await findAnchors(input, excludeId);
+  // Turso is a remote DB (see PIANO.md §9): every execute() is a network round
+  // trip, and on a colder Vercel<->Turso region pairing those add up fast.
+  // anchors -> graph is a real dependency (graph expands FROM the anchors),
+  // but vector/fts/corpusSize don't depend on anything here or on each other —
+  // they used to be awaited one after another regardless. Running them
+  // concurrently turns ~4 sequential round trips into 2 sequential stages.
+  const [anchors, vector, fts, corpusRs] = await Promise.all([
+    findAnchors(input, excludeId),
+    vectorNeighbors(input, excludeId),
+    lexicalMatches(input, excludeId),
+    db.execute("SELECT COUNT(*) AS n FROM items"),
+  ]);
   const graph = await expandNeighborhood(anchors, hops, excludeId);
-  const [vector, fts] = [
-    await vectorNeighbors(input, excludeId),
-    await lexicalMatches(input, excludeId),
-  ];
 
   const ranked = fuse([
     { source: "anchor", ids: anchors },
@@ -215,7 +222,6 @@ export async function retrieve(
     { source: "fts", ids: fts },
   ]).slice(0, limit);
 
-  const corpusRs = await db.execute("SELECT COUNT(*) AS n FROM items");
   const corpusSize = Number((corpusRs.rows[0] as unknown as { n: number }).n);
   if (ranked.length === 0) {
     return {
