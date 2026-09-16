@@ -42,11 +42,16 @@ export async function getDb(): Promise<Client> {
 }
 
 async function migrate(c: Client): Promise<void> {
-  // PRAGMAs first: journal_mode/foreign_keys are per-connection, executeMultiple
-  // is fine for these since none of them return rows we need.
+  // journal_mode is a local-file concept: Turso's remote server rejects it outright
+  // ("SQL not allowed statement"), and since it lived inside the executeMultiple
+  // schema block below, that one rejection silently aborted EVERY table creation —
+  // discovered by testing against a real Turso database, not from the docs.
+  if (DB_URL.startsWith("file:")) {
+    await c.execute("PRAGMA journal_mode = WAL");
+  }
+  await c.execute("PRAGMA foreign_keys = ON");
+
   await c.executeMultiple(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
 
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,

@@ -39,7 +39,7 @@ Rules:
 
 export async function parseMemory(text: string, now: Date = new Date()): Promise<ParsedMemory> {
   const completion = await groq.chat.completions.create({
-    model: "qwen/qwen3.6-27b",
+    model: "qwen/qwen3.8-27b",
     messages: [
       { role: "system", content: PARSE_SYSTEM },
       { role: "user", content: `${temporalContext(now)}\n\nInput:\n${text}` },
@@ -119,7 +119,7 @@ export async function searchWithLLM(
     .join("\n");
 
   const completion = await groq.chat.completions.create({
-    model: "qwen/qwen3.6-27b",
+    model: "qwen/qwen3.8-27b",
     messages: [
       { role: "system", content: SEARCH_SYSTEM },
       {
