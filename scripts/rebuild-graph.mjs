@@ -9,7 +9,7 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 
-const EMBED_MODEL = "Xenova/multilingual-e5-small";
+const EMBED_MODEL = "gemini/gemini-embedding-001@768";
 const MIN_SHARED_ENTITIES = 2;
 const MIN_CORPUS_FOR_SIMILARITY = 5;
 const TOP_K = 3;

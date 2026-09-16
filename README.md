@@ -1,10 +1,11 @@
 # 🧠 Second Brain AI
 
-Un secondo cervello personale, local-first e a comando vocale: parli, lui capisce, ricorda e
-ritrova. Next.js 16 (App Router), React 19, SQLite, Groq per LLM e trascrizione, embedding
-locali.
+Un secondo cervello personale a comando vocale: parli, lui capisce, ricorda e ritrova. Next.js 16
+(App Router), React 19, Turso (SQLite distribuito) su Vercel, Groq per LLM e trascrizione,
+embedding via Gemini API.
 
-**Costo di esercizio: 0 €/mese.** Le app commerciali equivalenti chiedono 20-35 €/mese.
+**Costo di esercizio: 0 €/mese** (tier gratuiti di Vercel, Turso, Groq e Gemini). Le app
+commerciali equivalenti chiedono 20-35 €/mese.
 
 ---
 
@@ -54,35 +55,43 @@ quando un risultato sorprende.
 ## 🛠️ Stack
 
 - **Frontend**: React 19, Tailwind CSS v4, Geist Mono
-- **Backend**: Next.js 16 App Router (route handlers)
-- **Database**: SQLite via `better-sqlite3`, con FTS5 per la ricerca lessicale
-- **LLM**: Groq SDK — `qwen/qwen3.6-27b` per parsing e ricerca, `openai/gpt-oss-120b` per il
+- **Hosting**: Vercel (funzioni serverless, regione `dub1`/Dublino)
+- **Database**: Turso (libSQL/SQLite distribuito) via `@libsql/client`, con FTS5 per la ricerca
+  lessicale. In locale, stesso client punta a un file `.db` — nessuna differenza di codice fra
+  sviluppo e produzione, solo le variabili d'ambiente cambiano (vedi §Avvio)
+- **LLM**: Groq SDK — `qwen/qwen3.8-27b` per parsing e ricerca, `openai/gpt-oss-120b` per il
   linking ragionato (opzionale), `whisper-large-v3` per la trascrizione
-- **Embedding**: `@huggingface/transformers` in-process, modello
-  `Xenova/multilingual-e5-small` (384 dim, multilingue). Nessuna chiamata di rete, 0 token.
+- **Embedding**: Gemini API (`gemini-embedding-001`, 768 dim, multilingue). Una chiamata HTTP per
+  nota, nessun modello locale — scelta fatta dopo che gli embedding locali (transformers.js +
+  onnxruntime-node) si sono rivelati impossibili da impacchettare in modo affidabile su Vercel
+  (dettagli in `PIANO.md` §9)
 
 ```
 second-brain/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── items/        # CRUD memorie (GET, PUT, PATCH, DELETE)
+│   │   │   ├── items/        # CRUD memorie (GET, PUT, PATCH, DELETE) + items/[id]
 │   │   │   ├── parse/        # analisi, salvataggio, embedding, archi
 │   │   │   ├── search/       # retrieval sul grafo + risposta LLM
+│   │   │   ├── tree/         # note raggruppate per dominio/entità (vista Vault)
+│   │   │   ├── reindex/      # ricalcolo archi + embedding mancanti, gratis
+│   │   │   ├── reanalyze/    # ri-parsing LLM in batch, rate-limited
 │   │   │   ├── transcribe/   # audio -> testo
 │   │   │   └── vault/        # rigenerazione del mirror markdown
 │   │   ├── globals.css
 │   │   ├── layout.tsx
 │   │   └── page.tsx
-│   ├── components/           # MemoryCard, EditModal, DuplicateModal, types
+│   ├── components/           # MemoryCard, EditModal, DuplicateModal, VaultView, NoteDetail, types
 │   └── lib/
-│       ├── db.ts             # SQLite, migrazioni, entità
-│       ├── embed.ts          # embedding locali (transformers.js)
+│       ├── db.ts             # client Turso/libSQL, migrazioni, entità
+│       ├── embed.ts          # embedding via Gemini API
 │       ├── graph.ts          # archi item<->item
 │       ├── groq.ts           # chiamate LLM
 │       ├── markdown.ts       # export vault Obsidian
 │       ├── retrieve.ts       # i 4 generatori + fusione RRF
 │       ├── tfidf.ts          # duplicati lato client
+│       ├── temporal.ts       # date relative -> assolute
 │       └── vector.ts         # cosine similarity
 ├── scripts/
 │   ├── backfill-embeddings.mjs
@@ -102,7 +111,7 @@ second-brain/
 | **`entities`** | Nodi entità | `id`, `name`, `normalized_name`, `type` |
 | **`item_entities`** | Legami M-N | `item_id`, `entity_id`, `confidence` |
 | **`edges`** | Archi del grafo | `source_id`, `target_id`, `edge_type`, `weight` — `MENTIONS`, `CO_OCCURS`, `SIMILAR_TO`, e i tipi ragionati |
-| **`embeddings`** | Vettori | `owner_id`, `vector` (384 float), `model`, `dim` |
+| **`embeddings`** | Vettori | `owner_id`, `vector` (768 float, Gemini), `model`, `dim` |
 | **`items_fts`** | Indice FTS5 | tabella virtuale external-content su `items` |
 
 ---
@@ -116,14 +125,20 @@ Node.js 18+ e npm.
 Crea `.env.local`:
 
 ```env
-GROQ_API_KEY=la_tua_chiave
+GROQ_API_KEY=la_tua_chiave       # console.groq.com
+GEMINI_API_KEY=la_tua_chiave     # aistudio.google.com, per gli embedding
 
 # opzionali
+TURSO_DATABASE_URL=              # se assente, usa un file SQLite locale
+TURSO_AUTH_TOKEN=
 SB_TIMEZONE=Europe/Rome           # fuso per risolvere le date relative
 VAULT_PATH=~/second-brain-vault   # dove generare il mirror markdown
 SB_REASONED_LINKING=0             # 1 per attivare gli archi ragionati (vedi sotto)
-SB_DB_PATH=                       # per puntare a un DB diverso (benchmark)
+SB_DB_PATH=                       # per puntare a un file DB diverso (benchmark)
 ```
+
+Senza `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN` l'app usa un file `secondbrain.db` locale — stesso
+codice, comportamento identico in sviluppo e in produzione (vedi `PIANO.md` §9.3).
 
 ### 3. Installazione e avvio
 
@@ -132,9 +147,13 @@ npm install
 npm run dev
 ```
 
-Al primo avvio il modello di embedding (~120 MB) viene scaricato una volta sola.
+### 4. Deploy (Vercel + Turso)
 
-### 4. Se hai già un database
+Collega il repo a Vercel (auto-deploy su push a `main`), imposta le stesse variabili
+d'ambiente nel progetto Vercel. Dettagli e insidie reali (limite funzioni serverless,
+regione del database, cache in sola lettura) in `PIANO.md` §9.
+
+### 5. Se hai già un database
 
 ```bash
 npm run embeddings:backfill   # genera i vettori mancanti

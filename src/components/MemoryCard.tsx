@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
+
+// Below this width, tap-and-hold competes with the OS's own text-selection
+// gesture (the magnifier/selection-handles popup) — swipe left/right replaces
+// it entirely instead of trying to out-time the OS. Above it (desktop-ish,
+// mouse-driven), hover reveals the action bar, so this never matters there.
+const MOBILE_BREAKPOINT = 640;
 import { Memory } from "./types";
 
 const TYPE_ICONS: Record<string, string> = {
@@ -56,6 +62,14 @@ export default function MemoryCard({
   const isHorizontal = useRef(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didLongPress = useRef(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   const doDelete = useCallback(() => {
     setActionsOpen(false);
@@ -76,6 +90,11 @@ export default function MemoryCard({
     isHorizontal.current = false;
     didLongPress.current = false;
 
+    // On narrow screens, tap-and-hold fights the OS's own text-selection
+    // gesture — skip it entirely there, swipe both ways covers the same
+    // two actions without the conflict.
+    if (isMobile) return;
+
     longPressTimer.current = setTimeout(() => {
       didLongPress.current = true;
       setActionsOpen(true);
@@ -95,17 +114,32 @@ export default function MemoryCard({
       }
       if (Math.abs(dx) > 8) isHorizontal.current = true;
     }
-    if (isHorizontal.current && dx < 0 && !actionsOpen) {
-      setActivelySwiping(true);
-      setSwipeX(Math.max(dx, -100));
+    if (isHorizontal.current && !actionsOpen) {
+      // Desktop/tablet keeps the old swipe-left-only-to-delete behaviour
+      // (right swipe there does nothing, hover already reveals both actions).
+      // Mobile gets both directions: left deletes, right edits.
+      if (dx < 0) {
+        setActivelySwiping(true);
+        setSwipeX(Math.max(dx, -100));
+      } else if (isMobile && dx > 0) {
+        setActivelySwiping(true);
+        setSwipeX(Math.min(dx, 100));
+      }
     }
   };
 
   const onTouchEnd = () => {
     cancelLongPress();
     setActivelySwiping(false);
-    if (!didLongPress.current && swipeX < -60) doDelete();
-    else if (!didLongPress.current) setSwipeX(0);
+    if (didLongPress.current) return;
+    if (swipeX < -60) {
+      doDelete();
+    } else if (isMobile && swipeX > 60) {
+      setSwipeX(0);
+      onEdit(memory);
+    } else {
+      setSwipeX(0);
+    }
   };
 
   const showActions = actionsOpen || (!isTouchDevice && hovered);
@@ -116,7 +150,7 @@ export default function MemoryCard({
 
   return (
     <div className="relative overflow-hidden" style={{ marginBottom: 1 }}>
-      {/* Swipe bg */}
+      {/* Swipe bg — left: delete (all screens), right: edit (mobile only) */}
       <div
         className="absolute inset-0 flex items-center justify-end pr-5"
         style={{
@@ -126,6 +160,19 @@ export default function MemoryCard({
       >
         <span className="text-white text-[11px] tracking-widest uppercase font-mono">elimina</span>
       </div>
+      {isMobile && (
+        <div
+          className="absolute inset-0 flex items-center justify-start pl-5"
+          style={{
+            background: `rgba(255,255,255,${swipeProgress * 0.14})`,
+            visibility: swipeX > 8 ? "visible" : "hidden",
+          }}
+        >
+          <span className="text-[11px] tracking-widest uppercase font-mono" style={{ color: "var(--fg)" }}>
+            modifica
+          </span>
+        </div>
+      )}
 
       {/* Card */}
       <div
@@ -139,6 +186,11 @@ export default function MemoryCard({
           borderLeft: `2px solid ${showActions ? "rgba(255,255,255,0.2)" : highlight ? color : "transparent"}`,
           transform: `translateX(${swipeX}px)`,
           transition: activelySwiping ? "none" : "transform 0.22s ease, background 0.15s, border-color 0.15s",
+          // Without this, a touch that starts moving horizontally still lets
+          // iOS/Android arm their own text-selection (magnifier + selection
+          // handles) mid-swipe, fighting our gesture. pan-y still allows the
+          // page itself to scroll vertically over this card.
+          ...(isMobile ? { touchAction: "pan-y", WebkitUserSelect: "none", userSelect: "none" } : {}),
         }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}

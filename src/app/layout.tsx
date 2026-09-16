@@ -9,7 +9,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Second Brain AI",
-  description: "Una memoria esterna intelligente, local-first",
+  description: "Una memoria esterna intelligente, a comando vocale",
 };
 
 export default function RootLayout({

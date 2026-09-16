@@ -328,7 +328,9 @@ in-process nel runtime Node di Next.
 - Convenzione E5, obbligatoria e facile da sbagliare: i documenti vanno prefissati
   `"passage: "`, le query `"query: "`. Senza prefissi la qualità crolla.
 - Costo: **0 token Groq**, nessuna rete a runtime, ~120 MB scaricati una volta sola.
-  Coerente con il local-first del progetto.
+  Coerente con il local-first del progetto *all'epoca* — superato in §9.8: gli
+  embedding locali si sono rivelati impossibili da impacchettare in modo
+  affidabile su Vercel, sostituiti con Gemini API.
 - Il runtime deve essere `nodejs`, non `edge`.
 
 ---

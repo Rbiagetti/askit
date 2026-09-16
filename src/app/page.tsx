@@ -581,11 +581,16 @@ export default function Home() {
           {mode !== "calendar" && mode !== "vault" && <button
             onClick={handleSubmit}
             disabled={processing || !input.trim()}
-            className="w-full py-2 text-[11px] tracking-[0.15em] uppercase transition-all disabled:opacity-25"
+            className="w-full py-2 text-[11px] tracking-[0.15em] uppercase transition-all disabled:opacity-25 flex items-center justify-center"
             style={{ background: "var(--fg)", color: "var(--bg)" }}
           >
-            {processing ? "..." : mode === "add" ? "Salva memoria  ⌘↵" : "Cerca  ⌘↵"}
-
+            {processing ? (
+              <span className="flex items-center gap-1.5">
+                <span className="glyph-dot" style={{ background: "var(--bg)" }} />
+                <span className="glyph-dot" style={{ background: "var(--bg)", animationDelay: "0.2s" }} />
+                <span className="glyph-dot" style={{ background: "var(--bg)", animationDelay: "0.4s" }} />
+              </span>
+            ) : mode === "add" ? "Salva memoria  ⌘↵" : "Cerca  ⌘↵"}
           </button>}
         </div>
       </header>
@@ -792,7 +797,7 @@ export default function Home() {
             </span>
           </div>
           <span className="text-[10px]" style={{ color: "var(--fg-muted)" }}>
-            {totalTokens > 0 ? `${totalTokens.toLocaleString("it-IT")} token usati` : "local-first · sqlite"}
+            {totalTokens > 0 ? `${totalTokens.toLocaleString("it-IT")} token usati` : "cloud · turso"}
           </span>
         </div>
       </footer>
