@@ -9,10 +9,20 @@
  * Model: multilingual-e5-small (384 dims). Multilingual is not optional here —
  * notes are written in Italian and English-only models degrade badly on them.
  */
-import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
+import { pipeline, env, type FeatureExtractionPipeline } from "@huggingface/transformers";
+import os from "node:os";
+import path from "node:path";
 
 export const EMBED_MODEL = "Xenova/multilingual-e5-small";
 export const EMBED_DIM = 384;
+
+// Vercel's deployment bundle (/var/task) is read-only; transformers.js's default
+// cache directory lives inside node_modules, which is part of that bundle. Found
+// by deploying, not from docs: "ENOENT: no such file or directory, mkdir
+// '/var/task/node_modules/@huggingface/transformers/.cache'". os.tmpdir() (/tmp
+// on Vercel) is the one writable path — ephemeral per instance, which is fine:
+// a cold start re-downloads the model once, warm instances reuse it.
+env.cacheDir = path.join(os.tmpdir(), "transformers-cache");
 
 let extractor: Promise<FeatureExtractionPipeline> | null = null;
 
