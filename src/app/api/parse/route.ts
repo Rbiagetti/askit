@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
       time_confidence: parsed.time.confidence,
     });
 
-    const entityNames = await syncItemEntities(itemId, parsed.entities);
+    const entityNames = await syncItemEntities(itemId, parsed.entities, text);
 
     const vector = await embed(parsed.summary || text, "passage");
     await saveEmbedding(itemId, "item", vector, EMBED_MODEL);

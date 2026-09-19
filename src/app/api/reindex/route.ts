@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { getDb, getItemsMissingEmbedding, getItemVectors, saveEmbedding } from "@/lib/db";
+import {
+  getDb,
+  getItemsMissingEmbedding,
+  getItemVectors,
+  saveEmbedding,
+  linkKnownEntitiesInText,
+} from "@/lib/db";
 import { embedBatch, EMBED_MODEL } from "@/lib/embed";
 import { rebuildItemEdges } from "@/lib/graph";
 
@@ -9,6 +15,7 @@ import { rebuildItemEdges } from "@/lib/graph";
  * - backfills missing embeddings (same logic as scripts/backfill-embeddings.mjs,
  *   but reusing lib/embed.ts in-process instead of shelling out to the script)
  * - recomputes CO_OCCURS / SIMILAR_TO for every item (lib/graph.ts)
+ * - links known entities that are named in a note but were missed by the LLM pass
  * - forces a full FTS5 index rebuild
  */
 export async function POST() {
@@ -27,7 +34,17 @@ export async function POST() {
       }
     }
 
-    // 2. Recompute item<->item edges for every item that now has a vector.
+    // 2. Re-link entities named literally in each note's text (additive).
+    const textRows = (await db.execute("SELECT id, raw_text FROM items")).rows as unknown as Array<{
+      id: string;
+      raw_text: string;
+    }>;
+    let entityLinksAdded = 0;
+    for (const row of textRows) {
+      entityLinksAdded += (await linkKnownEntitiesInText(row.id, row.raw_text)).length;
+    }
+
+    // 3. Recompute item<->item edges for every item that now has a vector.
     const allItemsRs = await db.execute("SELECT id FROM items");
     const allItems = allItemsRs.rows as unknown as Array<{ id: string }>;
     const vectorByItem = new Map(
@@ -44,7 +61,7 @@ export async function POST() {
       similar += result.similar;
     }
 
-    // 3. Force a full FTS5 rebuild.
+    // 4. Force a full FTS5 rebuild.
     let ftsRebuilt = false;
     try {
       await db.execute("INSERT INTO items_fts(items_fts) VALUES('rebuild')");
@@ -56,6 +73,7 @@ export async function POST() {
     return NextResponse.json({
       edgesRebuilt: { coOccurs, similar },
       embeddingsBackfilled: missing.length,
+      entityLinksAdded,
       ftsRebuilt,
     });
   } catch (error: unknown) {

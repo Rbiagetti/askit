@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        await syncItemEntities(item.id, parsed.entities);
+        await syncItemEntities(item.id, parsed.entities, item.raw_text);
 
         const vector = await embed(parsed.summary || item.raw_text, "passage");
         await saveEmbedding(item.id, "item", vector, EMBED_MODEL);

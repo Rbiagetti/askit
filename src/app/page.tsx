@@ -466,7 +466,7 @@ export default function Home() {
             <button
               onClick={() => setShowSettings(true)}
               aria-label="Impostazioni"
-              className="text-[13px] leading-none px-1"
+              className="text-[22px] leading-none px-2 py-1"
               style={{ color: "var(--fg-dim)" }}
             >
               ⚙

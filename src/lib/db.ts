@@ -218,7 +218,9 @@ export async function findOrCreateEntity(name: string, type: string): Promise<st
   const db = await getDb();
   const normalized = name.toLowerCase().trim();
   const existingRs = await db.execute({
-    sql: "SELECT id FROM entities WHERE normalized_name = ? AND type = ?",
+    // Type-agnostic on purpose: the LLM labels the same thing differently across
+    // notes ("Unicusano" as place, then as concept), which split one entity in two.
+    sql: "SELECT id FROM entities WHERE normalized_name = ? ORDER BY (type = ?) DESC LIMIT 1",
     args: [normalized, type],
   });
   const existing = existingRs.rows[0] as unknown as { id: string } | undefined;
@@ -378,7 +380,8 @@ export async function pruneOrphanEntities(): Promise<number> {
  */
 export async function syncItemEntities(
   itemId: string,
-  entities: Array<{ name: string; type: string }>
+  entities: Array<{ name: string; type: string }>,
+  text?: string
 ): Promise<string[]> {
   const db = await getDb();
   await db.batch(
@@ -405,6 +408,47 @@ export async function syncItemEntities(
     });
     names.push(ent.name);
   }
+  if (text) names.push(...(await linkKnownEntitiesInText(itemId, text)));
   await pruneOrphanEntities();
   return names;
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Links every already-known entity whose name literally appears in the note text.
+ *
+ * LLM entity extraction is not repeatable: two notes about "il master" ended up with
+ * different entities, so the Vault's "per entità" view split them. Entities the corpus
+ * already knows are matched deterministically here, after the LLM pass. Additive only:
+ * never removes a link. Returns the names newly linked.
+ */
+export async function linkKnownEntitiesInText(itemId: string, text: string): Promise<string[]> {
+  const db = await getDb();
+  const known = (await db.execute("SELECT id, name, normalized_name FROM entities")).rows as unknown as Array<{
+    id: string;
+    name: string;
+    normalized_name: string;
+  }>;
+  const linked = new Set(
+    (await db.execute({ sql: "SELECT entity_id FROM item_entities WHERE item_id = ?", args: [itemId] })).rows.map(
+      (r) => (r as unknown as { entity_id: string }).entity_id
+    )
+  );
+  const added: string[] = [];
+  for (const ent of known) {
+    if (linked.has(ent.id) || ent.normalized_name.length < 3) continue;
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(ent.normalized_name)}(?![\\p{L}\\p{N}])`, "iu");
+    if (!re.test(text)) continue;
+    await linkItemEntity(itemId, ent.id);
+    await createEdge({
+      source_id: itemId,
+      target_id: ent.id,
+      source_type: "item",
+      target_type: "entity",
+      edge_type: "MENTIONS",
+    });
+    added.push(ent.name);
+  }
+  return added;
 }

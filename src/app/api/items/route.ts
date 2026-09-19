@@ -121,7 +121,7 @@ export async function PUT(req: NextRequest) {
       ],
     });
 
-    const entityNames = await syncItemEntities(id, parsed.entities);
+    const entityNames = await syncItemEntities(id, parsed.entities, text);
 
     // the text changed, so both the stored vector and the derived edges are stale
     const vector = await embed(parsed.summary || text, "passage");
