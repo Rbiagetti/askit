@@ -61,16 +61,6 @@ export default function VaultView() {
   const [selectedEntityKey, setSelectedEntityKey] = useState<EntityKey | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
-  const [exporting, setExporting] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const showToast = useCallback((msg: string, ok = true) => {
-    setToast({ msg, ok });
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 3500);
-  }, []);
-
   const fetchTree = useCallback(async () => {
     const res = await fetch("/api/tree");
     const data = await res.json();
@@ -167,20 +157,6 @@ export default function VaultView() {
     [loadTree, tab]
   );
 
-  const exportVault = async () => {
-    if (exporting) return;
-    setExporting(true);
-    try {
-      const res = await fetch("/api/vault", { method: "POST" });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      showToast(`Esportate ${data.notes} note · ${data.entities} entità · ${data.removed} rimossi`);
-    } catch (e) {
-      showToast(`Errore export: ${e instanceof Error ? e.message : "sconosciuto"}`, false);
-    }
-    setExporting(false);
-  };
-
   const panelClass = (want: "folders" | "list" | "detail") =>
     `${level === want ? "flex" : "hidden"} md:flex flex-col overflow-hidden`;
 
@@ -210,22 +186,6 @@ export default function VaultView() {
             }}
           >
             Per entità
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          {toast && (
-            <span className="text-[10px]" style={{ color: toast.ok ? "var(--green)" : "var(--red)" }}>
-              {toast.msg}
-            </span>
-          )}
-          <button
-            onClick={exportVault}
-            disabled={exporting}
-            className="text-[10px] tracking-[0.12em] uppercase px-2.5 py-1 border transition-all disabled:opacity-40"
-            style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
-            title="Rigenera il mirror markdown Obsidian (POST /api/vault)"
-          >
-            {exporting ? "Esporto..." : "⇩ Esporta vault"}
           </button>
         </div>
       </div>
