@@ -11,12 +11,6 @@ export interface Memory {
   timeConfidence?: number;
 }
 
-export interface AskResult {
-  question: string;
-  response: string;
-  relevantIds: string[];
-}
-
 export interface SearchResult {
   clusters: Array<{
     topic: string;

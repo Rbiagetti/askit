@@ -339,18 +339,6 @@ export async function getAllItems() {
   return rs.rows;
 }
 
-export async function getAllEmbeddings() {
-  const db = await getDb();
-  const rs = await db.execute("SELECT * FROM embeddings WHERE owner_type = 'item'");
-  return rs.rows as unknown as Array<{
-    id: string;
-    owner_id: string;
-    owner_type: string;
-    vector: string;
-    model: string;
-  }>;
-}
-
 export async function deleteItem(id: string): Promise<void> {
   const db = await getDb();
   await db.batch(

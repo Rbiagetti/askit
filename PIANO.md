@@ -4,7 +4,9 @@
 > Il contesto inviato deve dipendere dal **vicinato nel grafo**, non dalla dimensione totale del database.
 > Vincolo di progetto: restare dentro il free tier Groq (30 req/min, 8.000 token/min, 200.000 token/giorno).
 
-Data: 12 settembre 2026 · Stato: **Fasi 0-5 implementate** sul branch `refactor/graph-retrieval`
+Data: settembre 2026 · Stato: **completato e in produzione** (Fasi 0-5, backlog usabilità, migrazione Turso/Vercel/Gemini — vedi §8 e §9)
+
+> Registro cronologico del progetto: decisioni, misure e anche i vicoli ciechi, scritto mentre il lavoro avveniva. Le sezioni più vecchie descrivono lo stato *di allora* (es. embedding locali, SQLite su file) e sono superate da §9.
 
 | Fase | Stato | Verifica |
 | :--- | :--- | :--- |
@@ -61,8 +63,7 @@ trattare l'ambiguità, non un fix tecnico.
 
 ## 9. Migrazione a Turso + deploy Vercel (host cloud gratuito)
 
-**Stato: in corso** (branch `feat/turso-migration`, un agente in background) ·
-Data: 12 settembre 2026
+**Stato: completato** (esito reale in §9.8) · Data: 12 settembre 2026
 
 ### 9.1 Perché
 
@@ -149,8 +150,7 @@ paga quindi una sola volta, indipendentemente da dove poi si decide di ospitare 
 
 ### 9.8 Esito finale (12 settembre 2026, sera)
 
-Deploy completato e verificato su https://second-brain-rbiagettis-projects.vercel.app
-(protetto da Vercel Authentication, come scelto). Percorso reale, non quello previsto
+Deploy completato e verificato su Vercel (protetto da Vercel Authentication, come scelto). Percorso reale, non quello previsto
 a tavolino:
 
 1. **`PRAGMA journal_mode = WAL`** rifiutata da Turso ("SQL not allowed statement"),
