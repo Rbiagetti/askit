@@ -3,6 +3,7 @@ import { getAllItems, deleteItem, getDb, syncItemEntities, saveEmbedding } from 
 import { parseMemory } from "@/lib/groq";
 import { embed, EMBED_MODEL } from "@/lib/embed";
 import { rebuildItemEdges } from "@/lib/graph";
+import { parseDbDate } from "@/lib/dates";
 import { mirror, neighbourIdsOf, entityNamesOf } from "@/lib/markdown";
 
 export async function GET() {
@@ -29,7 +30,7 @@ export async function GET() {
       entities: r.entity_list
         ? r.entity_list.split(",").map((e) => e.split("::")[0]).filter(Boolean)
         : [],
-      timestamp: new Date(r.created_at).getTime(),
+      timestamp: parseDbDate(r.created_at).getTime(),
       usageCount: r.usage_count || 0,
       timeRef: r.time_ref,
       timeConfidence: r.time_confidence || 0,

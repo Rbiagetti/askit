@@ -28,6 +28,22 @@ commerciali equivalenti chiedono 20-35 €/mese.
 
 ---
 
+## 📸 Screenshot
+
+Dati di esempio, interfaccia mobile (l'app è pensata per il telefono).
+
+| Home | Ricerca | Vault |
+| :---: | :---: | :---: |
+| <img src="docs/screenshots/01-home.png" width="220" alt="Home con le memorie"> | <img src="docs/screenshots/02-search.png" width="220" alt="Ricerca semantica raggruppata per tema"> | <img src="docs/screenshots/03-vault.png" width="220" alt="Vault per dominio"> |
+| Lista delle memorie, tipo e dominio assegnati dall'AI | La risposta cita solo le note recuperate dal grafo | Cartelle per dominio, come nel mirror Obsidian |
+
+| Elenco note | Dettaglio e grafo | Impostazioni |
+| :---: | :---: | :---: |
+| <img src="docs/screenshots/03b-vault-list.png" width="220" alt="Elenco delle note di un dominio"> | <img src="docs/screenshots/04-note-graph.png" width="220" alt="Dettaglio nota con collegamenti nel grafo"> | <img src="docs/screenshots/05-settings.png" width="220" alt="Lista domini modificabile"> |
+| Note di un dominio | Entità e archi verso le note simili, con peso | Lista domini modificabile |
+
+---
+
 ## 🏗️ Come funziona il retrieval
 
 Il punto centrale del progetto. Quattro generatori di candidati girano **in locale, a costo
@@ -203,3 +219,9 @@ SB_DB_PATH=/tmp/bench.db node scripts/seed-synthetic.mjs 200
 SB_DB_PATH=/tmp/bench.db node scripts/rebuild-graph.mjs
 # poi punta l'app a /tmp/bench.db e interroga /api/search con {"dryRun": true}
 ```
+
+---
+
+## 📄 Licenza
+
+[MIT](LICENSE) © 2026 Roberto Biagetti

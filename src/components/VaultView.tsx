@@ -71,23 +71,37 @@ export default function VaultView() {
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   }, []);
 
+  const fetchTree = useCallback(async () => {
+    const res = await fetch("/api/tree");
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return data;
+  }, []);
+
+  // Manual reload (after an edit / export): runs from event handlers, so setting
+  // state up front is fine here.
   const loadTree = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/tree");
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setTree(data);
+      setTree(await fetchTree());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Errore sconosciuto");
     }
     setLoading(false);
-  }, []);
+  }, [fetchTree]);
 
+  // Initial load: `loading` already starts as true, so the effect only needs to fetch.
   useEffect(() => {
-    loadTree();
-  }, [loadTree]);
+    let alive = true;
+    fetchTree()
+      .then((data) => alive && setTree(data))
+      .catch((e) => alive && setError(e instanceof Error ? e.message : "Errore sconosciuto"))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [fetchTree]);
 
   // Mobile navigation level, derived from selection state (folders -> list -> detail).
   const level: "folders" | "list" | "detail" = selectedItemId
@@ -392,6 +406,7 @@ export default function VaultView() {
           <div className={`${panelClass("detail")} flex-1`}>
             {selectedItemId ? (
               <NoteDetail
+                key={selectedItemId}
                 itemId={selectedItemId}
                 onClose={() => setSelectedItemId(null)}
                 onBack={() => setSelectedItemId(null)}

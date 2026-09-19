@@ -9,6 +9,15 @@ import DuplicateModal from "@/components/DuplicateModal";
 import VaultView from "@/components/VaultView";
 import SettingsModal from "@/components/SettingsModal";
 
+// ─── Clock ────────────────────────────────────────────────────────────────────
+// Time is read only from event handlers and timers (save, auto-submit countdown,
+// start of a recording) — never while rendering. eslint-plugin-react-hooks can't
+// tell that for functions defined inside the component, so it flags any direct
+// Date.now()/performance.now() there. Reading the clock through module-level
+// helpers states the intent: these are event-time reads, not render-time ones.
+const nowMs = () => Date.now();
+const perfNowMs = () => performance.now();
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -139,7 +148,7 @@ export default function Home() {
         type: data.type || "note",
         domain: data.domain || "general",
         entities: data.entities || [],
-        timestamp: Date.now(),
+        timestamp: nowMs(),
         usageCount: 0,
         timeRef: data.timeRef || null,
         timeConfidence: data.timeConfidence || 0,
@@ -265,10 +274,10 @@ export default function Home() {
   // stale closure over `input`/`mode`.
   const armAutoSubmit = (raw: string) => {
     cancelAutoSubmit();
-    const deadline = Date.now() + AUTO_SUBMIT_MS;
+    const deadline = nowMs() + AUTO_SUBMIT_MS;
     setAutoSubmitLeft(AUTO_SUBMIT_MS);
     autoSubmitIntervalRef.current = setInterval(() => {
-      const left = deadline - Date.now();
+      const left = deadline - nowMs();
       setAutoSubmitLeft(left > 0 ? left : 0);
     }, 100);
     autoSubmitTimeoutRef.current = setTimeout(() => {
@@ -313,7 +322,7 @@ export default function Home() {
         analyser.fftSize = 512;
         source.connect(analyser);
         audioCtxRef.current = audioCtx;
-        recordingStartRef.current = performance.now();
+        recordingStartRef.current = perfNowMs();
         baselineRef.current = null;
         baselineSamplesRef.current = [];
         silenceStartRef.current = null;

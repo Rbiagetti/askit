@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { parseDbDate } from "@/lib/dates";
 import { ItemDetailResponse } from "./types";
 
 const TYPE_ICONS: Record<string, string> = {
@@ -48,7 +49,7 @@ const EDGE_COLOR: Record<string, string> = {
 };
 
 function fmtDate(iso: string): string {
-  const d = new Date(iso);
+  const d = parseDbDate(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("it-IT", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
@@ -79,26 +80,29 @@ export default function NoteDetail({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const load = useCallback(async (id: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/items/${id}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setDetail(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Errore sconosciuto");
-      setDetail(null);
-    }
-    setLoading(false);
-  }, []);
-
+  // State (loading, editing, errors) starts fresh for every note because the parent
+  // renders this with key={itemId}, so this effect only has to fetch — no synchronous
+  // resets inside the effect body.
   useEffect(() => {
-    setEditingDomain(false);
-    setSaveError(null);
-    load(itemId);
-  }, [itemId, load]);
+    let alive = true;
+    fetch(`/api/items/${itemId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        if (alive) setDetail(data);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setError(e instanceof Error ? e.message : "Errore sconosciuto");
+        setDetail(null);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [itemId]);
 
   const startEditDomain = () => {
     setDomainDraft(detail?.item.domain || "general");
