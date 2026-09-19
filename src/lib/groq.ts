@@ -1,5 +1,6 @@
 import Groq from "groq-sdk";
 import { temporalContext, describeWhen } from "./temporal";
+import { getDomains, matchDomain, FALLBACK_DOMAIN } from "./settings";
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -19,7 +20,7 @@ const PARSE_SYSTEM = `You are a memory parser for a personal knowledge system. G
 Respond ONLY with valid JSON matching this schema:
 {
   "type": "note" | "task" | "wishlist" | "idea" | "reminder",
-  "domain": "string (e.g. food, travel, work, cinema, music, tech, health, relationships, finance, learning)",
+  "domain": "exactly one of: {{DOMAINS}}",
   "entities": [{"name": "string", "type": "place" | "movie" | "concept" | "person"}],
   "intent": "save" | "remind" | "explore",
   "time": {"datetime": "ISO8601 or null", "confidence": 0.0-1.0},
@@ -28,7 +29,7 @@ Respond ONLY with valid JSON matching this schema:
 
 Rules:
 - Always extract entities when present
-- Infer domain from context
+- Infer domain from context. It MUST be exactly one of the listed values — never invent a new one; if none fits, use "{{FALLBACK}}"
 - Resolve every temporal reference against the "Current datetime" given in the user message,
   and always emit time.datetime as an ABSOLUTE ISO8601 timestamp with offset — never a relative
   expression. "domani alle 18" becomes the actual next-day date at 18:00.
@@ -38,10 +39,13 @@ Rules:
 - Never add entities that aren't clearly referenced`;
 
 export async function parseMemory(text: string, now: Date = new Date()): Promise<ParsedMemory> {
+  // The allowed domains are user-editable (settings), so the prompt is built per call.
+  const domains = await getDomains();
+  const system = PARSE_SYSTEM.replace("{{DOMAINS}}", domains.join(", ")).replace("{{FALLBACK}}", FALLBACK_DOMAIN);
   const completion = await groq.chat.completions.create({
     model: "qwen/qwen3.8-27b",
     messages: [
-      { role: "system", content: PARSE_SYSTEM },
+      { role: "system", content: system },
       { role: "user", content: `${temporalContext(now)}\n\nInput:\n${text}` },
     ],
     temperature: 0.1,
@@ -58,7 +62,8 @@ export async function parseMemory(text: string, now: Date = new Date()): Promise
 
   return {
     type: parsed.type || "note",
-    domain: parsed.domain || "general",
+    // the model can still ignore the list; anything outside it falls back to "general"
+    domain: matchDomain(parsed.domain, domains),
     entities: parsed.entities || [],
     intent: parsed.intent || "save",
     time: parsed.time || { datetime: null, confidence: 0 },

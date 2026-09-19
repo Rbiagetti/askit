@@ -7,6 +7,7 @@ import EditModal from "@/components/EditModal";
 import MemoryCard from "@/components/MemoryCard";
 import DuplicateModal from "@/components/DuplicateModal";
 import VaultView from "@/components/VaultView";
+import SettingsModal from "@/components/SettingsModal";
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,7 @@ export default function Home() {
   const [dupClusters, setDupClusters] = useState<DuplicateCluster[]>([]);
   const [showDup, setShowDup] = useState(false);
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -452,6 +454,14 @@ export default function Home() {
                 {toast.msg}
               </span>
             )}
+            <button
+              onClick={() => setShowSettings(true)}
+              aria-label="Impostazioni"
+              className="text-[13px] leading-none px-1"
+              style={{ color: "var(--fg-dim)" }}
+            >
+              ⚙
+            </button>
           </div>
 
           {/* Mode selector */}
@@ -813,6 +823,9 @@ export default function Home() {
           onClose={() => setShowDup(false)}
         />
       )}
+
+      {/* ── SETTINGS MODAL ── */}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onToast={showToast} />}
 
       {/* ── EDIT MODAL ── */}
       {editingMemory && (

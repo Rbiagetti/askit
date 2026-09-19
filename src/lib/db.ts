@@ -113,6 +113,8 @@ async function migrate(c: Client): Promise<void> {
 
   // Safe migrations for existing DBs — each guarded, "duplicate column" is expected
   const migrations = [
+    // key/value user settings (currently: the list of allowed domains)
+    "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "ALTER TABLE items ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0",
     // dim lets us invalidate every vector in bulk if the embedding model changes
     "ALTER TABLE embeddings ADD COLUMN dim INTEGER",

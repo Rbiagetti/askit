@@ -23,6 +23,7 @@ commerciali equivalenti chiedono 20-35 €/mese.
   `CONTRADICTS`, `RELATES_TO`).
 - **Mirror markdown per Obsidian** — ogni nota viene proiettata in un file `.md` con
   frontmatter e `[[wikilink]]`, apribile come vault Obsidian con tanto di graph view.
+- **Domini a lista controllata** — l'AI assegna ogni nota a uno dei domini configurati (default: food, travel, work…) e non ne inventa altri, così le cartelle del Vault non si frammentano (`cibo`/`food`/`cucina`). La lista si modifica dall'ingranaggio in alto (`/api/settings`); fuori lista → `general`.
 - **Estetica Nothing Phone** — dark mode ad alto contrasto, dot-grid.
 
 ---
@@ -74,6 +75,7 @@ second-brain/
 │   │   │   ├── items/        # CRUD memorie (GET, PUT, PATCH, DELETE) + items/[id]
 │   │   │   ├── parse/        # analisi, salvataggio, embedding, archi
 │   │   │   ├── search/       # retrieval sul grafo + risposta LLM
+│   │   │   ├── settings/     # lista domini modificabile
 │   │   │   ├── tree/         # note raggruppate per dominio/entità (vista Vault)
 │   │   │   ├── reindex/      # ricalcolo archi + embedding mancanti, gratis
 │   │   │   ├── reanalyze/    # ri-parsing LLM in batch, rate-limited
@@ -82,13 +84,14 @@ second-brain/
 │   │   ├── globals.css
 │   │   ├── layout.tsx
 │   │   └── page.tsx
-│   ├── components/           # MemoryCard, EditModal, DuplicateModal, VaultView, NoteDetail, types
+│   ├── components/           # MemoryCard, EditModal, DuplicateModal, VaultView, NoteDetail, SettingsModal, types
 │   └── lib/
 │       ├── db.ts             # client Turso/libSQL, migrazioni, entità
 │       ├── embed.ts          # embedding via Gemini API
 │       ├── graph.ts          # archi item<->item
 │       ├── groq.ts           # chiamate LLM
 │       ├── markdown.ts       # export vault Obsidian
+│       ├── settings.ts       # impostazioni utente (lista domini)
 │       ├── retrieve.ts       # i 4 generatori + fusione RRF
 │       ├── tfidf.ts          # duplicati lato client
 │       ├── temporal.ts       # date relative -> assolute
