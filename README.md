@@ -4,8 +4,6 @@ Un blocco note a comando vocale: scrivi o detti appunti veloci, come post-it, se
 (App Router), React 19, Turso (SQLite distribuito) su Vercel, Groq per LLM e trascrizione,
 embedding via Gemini API.
 
-**Costo di esercizio: 0 €/mese** (tier gratuiti di Vercel, Turso, Groq e Gemini). Le app
-commerciali equivalenti chiedono 20-35 €/mese.
 
 ---
 
