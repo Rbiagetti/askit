@@ -642,7 +642,7 @@ export default function Home() {
             <div className="fade-in border-b border-[var(--border)] px-4 py-4 space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] tracking-[0.15em] uppercase" style={{ color: "var(--fg-muted)" }}>
-                  🔍 RISERCA SEMANTICA
+                  🔍 RICERCA SEMANTICA
                 </p>
                 <button
                   onClick={() => setSearchResult(null)}

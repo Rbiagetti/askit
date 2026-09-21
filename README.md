@@ -22,6 +22,11 @@ commerciali equivalenti chiedono 20-35 €/mese.
   semantica e, opzionalmente, relazioni ragionate dal modello (`DUPLICATES`, `CONTINUES`,
   `CONTRADICTS`, `RELATES_TO`).
 - **Domini a lista controllata** — l'AI assegna ogni nota a uno dei domini configurati (default: food, travel, work…) e non ne inventa altri, così le cartelle del Vault non si frammentano (`cibo`/`food`/`cucina`). La lista si modifica dall'ingranaggio in alto (`/api/settings`); fuori lista → `general`.
+- **Post-it prima, domande dopo** — su *Aggiungi* ogni testo viene salvato come nota, senza
+  eccezioni; le domande si fanno su *Cerca*.
+- **Archivia, non solo elimina** — swipe a destra sulla nota: corto = modifica, lungo e tenuto =
+  archivia (o ripristina, dall'elenco «archiviate»). Swipe a sinistra lungo = elimina per
+  sempre. Le archiviate spariscono da lista, calendario, Vault e ricerca ma restano salvate.
 - **Estetica Nothing Phone** — dark mode ad alto contrasto, dot-grid.
 
 ---
