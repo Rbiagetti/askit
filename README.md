@@ -1,13 +1,15 @@
-# 🗒️ Ask It
+# Ask It
 
-Un blocco note a comando vocale: scrivi o detti appunti veloci, come post-it, senza badare a come; poi glielo chiedi. Lui capisce, ricorda e ritrova. Next.js 16
-(App Router), React 19, Turso (SQLite distribuito) su Vercel, Groq per LLM e trascrizione,
-embedding via Gemini API.
+Ask It è un blocco note a comando vocale. Gli appunti si scrivono o si dettano in modo rapido e
+senza alcun criterio, come su un post-it; il sistema li struttura, li conserva e permette di
+interrogarli in un secondo momento.
 
+Stack: Next.js 16 (App Router), React 19, Turso (SQLite distribuito) su Vercel, Groq per LLM e
+trascrizione, Gemini API per gli embedding.
 
 ---
 
-## 🚀 Cosa fa
+## Cosa fa
 
 - **Cattura vocale** — registri, `whisper-large-v3` su Groq trascrive, il testo viene
   strutturato automaticamente (tipo, dominio, entità, data, importanza).
@@ -20,16 +22,17 @@ embedding via Gemini API.
   semantica e, opzionalmente, relazioni ragionate dal modello (`DUPLICATES`, `CONTINUES`,
   `CONTRADICTS`, `RELATES_TO`).
 - **Domini a lista controllata** — l'AI assegna ogni nota a uno dei domini configurati (default: food, travel, work…) e non ne inventa altri, così le cartelle del Vault non si frammentano (`cibo`/`food`/`cucina`). La lista si modifica dall'ingranaggio in alto (`/api/settings`); fuori lista → `general`.
-- **Post-it prima, domande dopo** — su *Aggiungi* ogni testo viene salvato come nota, senza
-  eccezioni; le domande si fanno su *Cerca*.
-- **Archivia, non solo elimina** — swipe a destra sulla nota: corto = modifica, lungo e tenuto =
-  archivia (o ripristina, dall'elenco «archiviate»). Swipe a sinistra lungo = elimina per
-  sempre. Le archiviate spariscono da lista, calendario, Vault e ricerca ma restano salvate.
-- **Estetica Nothing Phone** — dark mode ad alto contrasto, dot-grid.
+- **Salvataggio e ricerca separati** — in *Aggiungi* ogni testo viene salvato come nota, senza
+  eccezioni; le domande si pongono in *Cerca*.
+- **Archiviazione** — scorrimento a destra sulla nota: breve = modifica, lungo e mantenuto =
+  archivia (o ripristina, dall'elenco «archiviate»). Scorrimento a sinistra, lungo = eliminazione
+  definitiva. Le note archiviate non compaiono in elenco, calendario, Vault e ricerca, ma restano
+  salvate.
+- **Interfaccia** — tema scuro ad alto contrasto con griglia di punti, ispirato all'estetica di Nothing Phone.
 
 ---
 
-## 📸 Screenshot
+## Screenshot
 
 Dati di esempio, interfaccia mobile (l'app è pensata per il telefono).
 
@@ -45,7 +48,7 @@ Dati di esempio, interfaccia mobile (l'app è pensata per il telefono).
 
 ---
 
-## 🏗️ Come funziona il retrieval
+## Come funziona il retrieval
 
 Il punto centrale del progetto. Quattro generatori di candidati girano **in locale, a costo
 zero token**; solo i sopravvissuti alla fusione vedono l'LLM.
@@ -70,7 +73,7 @@ quando un risultato sorprende.
 
 ---
 
-## 🛠️ Stack
+## Stack
 
 - **Frontend**: React 19, Tailwind CSS v4, Geist Mono
 - **Hosting**: Vercel (funzioni serverless, regione `dub1`/Dublino)
@@ -120,7 +123,7 @@ askit/
 
 ---
 
-## 💾 Schema
+## Schema
 
 | Tabella | Scopo | Colonne principali |
 | :--- | :--- | :--- |
@@ -133,7 +136,7 @@ askit/
 
 ---
 
-## 🚀 Avvio
+## Avvio
 
 ### 1. Requisiti
 Node.js 18+ e npm.
@@ -159,12 +162,16 @@ codice, comportamento identico in sviluppo e in produzione (vedi `PIANO.md` §9.
 
 ### Accesso
 
-L'app è protetta da una sola password, `ASKIT_PASSWORD`: senza, chi conosce l'indirizzo può
-leggere e cancellare le note e consumare le quote di Groq/Gemini. Il login (`/login`) imposta un
-cookie di un anno, rinnovato a ogni visita; il controllo è sia nel `proxy.ts` (reindirizza al login) sia dentro ogni
-route API (è lì che stanno i dati). **In produzione, senza `ASKIT_PASSWORD` l'app risponde 503**
-a tutto invece di restare aperta; in sviluppo (`npm run dev`) il controllo è spento. Cambiare la
-password disconnette tutte le sessioni. Usane una lunga: il tentativo sbagliato è solo rallentato.
+L'applicazione è protetta da un'unica password, `ASKIT_PASSWORD`. In assenza di protezione, chiunque
+conosca l'indirizzo potrebbe leggere ed eliminare le note e consumare le quote di Groq e Gemini.
+
+- Il login (`/login`) imposta un cookie di un anno, rinnovato a ogni visita.
+- Il controllo è eseguito sia in `proxy.ts` (reindirizzamento al login) sia all'interno di ogni
+  route API, che è il punto in cui risiedono i dati.
+- In produzione, se `ASKIT_PASSWORD` non è impostata, l'applicazione risponde 503 a ogni richiesta
+  invece di restare accessibile. In sviluppo (`npm run dev`) il controllo è disattivato.
+- La modifica della password disconnette tutte le sessioni.
+- Si raccomanda una password lunga: i tentativi errati sono soltanto rallentati, non bloccati.
 
 ### 3. Installazione e avvio
 
@@ -179,7 +186,7 @@ Collega il repo a Vercel (auto-deploy su push a `main`), imposta le stesse varia
 d'ambiente nel progetto Vercel. Dettagli e insidie reali (limite funzioni serverless,
 regione del database, cache in sola lettura) in `PIANO.md` §9.
 
-### 5. Se hai già un database
+### 5. Database esistente
 
 ```bash
 npm run embeddings:backfill   # genera i vettori mancanti
@@ -188,7 +195,7 @@ npm run graph:rebuild         # costruisce gli archi item<->item
 
 ---
 
-## ⚙️ Limiti del free tier Groq
+## Limiti del free tier Groq
 
 | Limite | Valore | Conseguenza |
 | :--- | :--- | :--- |
@@ -203,7 +210,7 @@ comunque un grafo utilizzabile a costo zero.
 
 ---
 
-## 🧪 Benchmark
+## Benchmark
 
 Il criterio di progetto è che il costo del retrieval non dipenda dalla dimensione del corpus:
 
@@ -216,6 +223,6 @@ ASKIT_DB_PATH=/tmp/bench.db node scripts/rebuild-graph.mjs
 
 ---
 
-## 📄 Licenza
+## Licenza
 
 [MIT](LICENSE) © 2026 Roberto Biagetti
