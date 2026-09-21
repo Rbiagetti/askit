@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { denyIfUnauthed } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 
 /**
@@ -28,9 +29,11 @@ interface ItemRow {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });

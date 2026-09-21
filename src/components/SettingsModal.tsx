@@ -52,6 +52,11 @@ export default function SettingsModal({
     setDraft("");
   };
 
+  const logout = async () => {
+    await fetch("/api/auth", { method: "DELETE" }).catch(() => {});
+    window.location.href = "/login";
+  };
+
   const save = async () => {
     setSaving(true);
     try {
@@ -169,6 +174,14 @@ export default function SettingsModal({
               Predefiniti
             </button>
           </div>
+
+          <button
+            onClick={logout}
+            className="w-full py-2 text-[11px] tracking-[0.15em] uppercase border"
+            style={{ borderColor: "var(--border)", color: "var(--fg-dim)" }}
+          >
+            Esci
+          </button>
         </div>
       </div>
     </div>

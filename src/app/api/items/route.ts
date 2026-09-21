@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { denyIfUnauthed } from "@/lib/auth";
 import { getAllItems, deleteItem, getDb, syncItemEntities, saveEmbedding } from "@/lib/db";
 import { parseMemory } from "@/lib/groq";
 import { embed, EMBED_MODEL } from "@/lib/embed";
 import { rebuildItemEdges } from "@/lib/graph";
 import { parseDbDate } from "@/lib/dates";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const rows = (await getAllItems()) as unknown as Array<{
       id: string;
@@ -45,6 +48,8 @@ export async function GET() {
 }
 
 export async function DELETE(req: NextRequest) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const { id } = await req.json();
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
@@ -57,6 +62,8 @@ export async function DELETE(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const { id, domain, archived } = await req.json();
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
@@ -98,6 +105,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const { id, text } = await req.json();
     if (!id || !text) return NextResponse.json({ error: "id and text required" }, { status: 400 });

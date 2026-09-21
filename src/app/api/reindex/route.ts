@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { denyIfUnauthed } from "@/lib/auth";
 import {
   getDb,
   getItemsMissingEmbedding,
@@ -18,7 +19,9 @@ import { rebuildItemEdges } from "@/lib/graph";
  * - links known entities that are named in a note but were missed by the LLM pass
  * - forces a full FTS5 index rebuild
  */
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const db = await getDb();
 

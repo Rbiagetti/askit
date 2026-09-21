@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { denyIfUnauthed } from "@/lib/auth";
 import { parseMemory, linkWithLLM } from "@/lib/groq";
 import { createItem, syncItemEntities, saveEmbedding } from "@/lib/db";
 import { embed, EMBED_MODEL } from "@/lib/embed";
@@ -11,6 +12,8 @@ import {
 import { retrieve } from "@/lib/retrieve";
 
 export async function POST(req: NextRequest) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const { text, force } = await req.json();
     if (!text || typeof text !== "string") {

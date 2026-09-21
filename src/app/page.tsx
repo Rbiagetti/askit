@@ -79,7 +79,11 @@ export default function Home() {
   // ── Load from SQLite on mount ──
   useEffect(() => {
     fetch("/api/items")
-      .then((r) => r.json())
+      .then((r) => {
+        // session expired (or never opened): back to the login page
+        if (r.status === 401) window.location.href = "/login";
+        return r.json();
+      })
       .then((d) => {
         setMemories(d.items || []);
         setLoaded(true);

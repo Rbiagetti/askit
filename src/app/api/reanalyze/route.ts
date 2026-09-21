@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { denyIfUnauthed } from "@/lib/auth";
 import { getDb, syncItemEntities, saveEmbedding } from "@/lib/db";
 import { parseMemory } from "@/lib/groq";
 import { embed, EMBED_MODEL } from "@/lib/embed";
@@ -22,6 +23,8 @@ interface PendingItem {
 }
 
 export async function POST(req: NextRequest) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const body = await req.json().catch(() => ({}));
     const requestedLimit = Number(body?.limit);

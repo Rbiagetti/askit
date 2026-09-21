@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { denyIfUnauthed } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 
 /**
@@ -18,7 +19,9 @@ interface TreeItem {
   createdAt: string;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const db = await getDb();
 

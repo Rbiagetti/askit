@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { denyIfUnauthed } from "@/lib/auth";
 import { searchWithLLM } from "@/lib/groq";
 import { retrieve } from "@/lib/retrieve";
 
 export async function POST(req: NextRequest) {
+  const denied = await denyIfUnauthed(req);
+  if (denied) return denied;
   try {
     const { query, dryRun } = await req.json();
     if (!query || typeof query !== "string") {

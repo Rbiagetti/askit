@@ -141,6 +141,7 @@ Crea `.env.local`:
 ```env
 GROQ_API_KEY=la_tua_chiave       # console.groq.com
 GEMINI_API_KEY=la_tua_chiave     # aistudio.google.com, per gli embedding
+ASKIT_PASSWORD=una-password-lunga # obbligatoria in produzione (vedi «Accesso» sotto)
 
 # opzionali
 TURSO_DATABASE_URL=              # se assente, usa un file SQLite locale
@@ -152,6 +153,15 @@ ASKIT_DB_PATH=                       # per puntare a un file DB diverso (benchma
 
 Senza `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN` l'app usa un file `askit.db` locale — stesso
 codice, comportamento identico in sviluppo e in produzione (vedi `PIANO.md` §9.3).
+
+### Accesso
+
+L'app è protetta da una sola password, `ASKIT_PASSWORD`: senza, chi conosce l'indirizzo può
+leggere e cancellare le note e consumare le quote di Groq/Gemini. Il login (`/login`) imposta un
+cookie di 30 giorni; il controllo è sia nel `proxy.ts` (reindirizza al login) sia dentro ogni
+route API (è lì che stanno i dati). **In produzione, senza `ASKIT_PASSWORD` l'app risponde 503**
+a tutto invece di restare aperta; in sviluppo (`npm run dev`) il controllo è spento. Cambiare la
+password disconnette tutte le sessioni. Usane una lunga: il tentativo sbagliato è solo rallentato.
 
 ### 3. Installazione e avvio
 
