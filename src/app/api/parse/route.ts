@@ -15,19 +15,17 @@ export async function POST(req: NextRequest) {
   const denied = await denyIfUnauthed(req);
   if (denied) return denied;
   try {
-    const { text, force } = await req.json();
+    const { text } = await req.json();
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "text is required" }, { status: 400 });
     }
 
     const parsed = await parseMemory(text);
 
-    // A question ("explore") gets routed to search instead of becoming a note.
-    // `force: "save"` lets the user override that (e.g. "salva comunque come nota").
-    // No extra LLM call: this reuses the intent parseMemory already returned above.
-    if (parsed.intent === "explore" && force !== "save") {
-      return NextResponse.json({ routed: "search", parsed });
-    }
+    // Adding always saves. It used to re-route anything the model called a
+    // question ("explore") to search, which swallowed plain notes like
+    // "prova askit" (10/10 times). Where the user is decides what they want:
+    // Aggiungi saves, Cerca asks.
 
     const itemId = await createItem({
       content: parsed.summary,
@@ -69,7 +67,6 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      routed: "save",
       reasonedLinks: reasoned,
       id: itemId,
       content: parsed.summary,

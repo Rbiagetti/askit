@@ -30,7 +30,6 @@ export default function Home() {
   const [audioLevel, setAudioLevel] = useState(0);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [autoSubmitLeft, setAutoSubmitLeft] = useState<number | null>(null); // ms left, null = inactive
-  const [routedNotice, setRoutedNotice] = useState<string | null>(null); // raw text auto-routed to search
   // Removed askResult state (unified search)
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [totalTokens, setTotalTokens] = useState(0);
@@ -123,9 +122,8 @@ export default function Home() {
   // ── Add memory → save to SQLite ──
   // `raw` is passed explicitly (rather than read from `input` state) so this can be
   // called safely from timers/callbacks (voice auto-submit) without stale closures.
-  // A question ("intent: explore") gets routed to search by /api/parse instead of
-  // creating a note — `opts.force` overrides that ("salva comunque come nota").
-  const submitAdd = async (raw: string, opts: { force?: boolean; clearInput?: boolean } = {}) => {
+  // Always saves: no re-routing to search based on what the model thinks the text is.
+  const submitAdd = async (raw: string, opts: { clearInput?: boolean } = {}) => {
     if (!raw.trim() || processingRef.current) return;
     setProcessing(true);
     if (opts.clearInput) setInput("");
@@ -134,20 +132,11 @@ export default function Home() {
       const res = await fetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: raw, ...(opts.force ? { force: "save" } : {}) }),
+        body: JSON.stringify({ text: raw }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      if (data.routed === "search") {
-        setMode("search");
-        setRoutedNotice(raw);
-        setProcessing(false);
-        await runSearch(raw);
-        return;
-      }
-
-      setRoutedNotice(null);
       const newMem: Memory = {
         id: data.id,
         text: raw,
@@ -161,7 +150,8 @@ export default function Home() {
         timeConfidence: data.timeConfidence || 0,
       };
       setMemories((prev) => [newMem, ...prev]);
-      showToast(`${data.type} · ${data.domain}`);
+      // A question typed into Aggiungi is still saved; just point at where it belongs.
+      showToast(/\?\s*$/.test(raw.trim()) ? "Salvata come nota · per chiedere usa Cerca" : `${data.type} · ${data.domain}`);
     } catch (e) {
       if (opts.clearInput) setInput(raw);
       showToast(`Errore: ${e instanceof Error ? e.message : "sconosciuto"}`, false);
@@ -170,16 +160,6 @@ export default function Home() {
   };
 
   const addMemory = () => submitAdd(input, { clearInput: true });
-
-  // User tapped "salva comunque come nota" on a note that got auto-routed to search.
-  const forceSaveAsNote = async () => {
-    if (!routedNotice) return;
-    const raw = routedNotice;
-    setRoutedNotice(null);
-    await submitAdd(raw, { force: true });
-    setMode("add");
-    setSearchResult(null);
-  };
 
 
   // askQuestion removed – unified under search mode
@@ -412,8 +392,7 @@ export default function Home() {
     setRecording(false);
   };
 
-  // POST /api/search + populate searchResult. Shared by manual search and the
-  // auto-routing path (intent: explore) in submitAdd above.
+  // POST /api/search + populate searchResult.
   const runSearch = async (query: string) => {
     setProcessing(true);
     setSearchResult(null);
@@ -445,7 +424,6 @@ export default function Home() {
   const selectMode = (m: "add" | "search" | "calendar" | "vault") => {
     setMode(m);
     setSearchResult(null);
-    setRoutedNotice(null);
   };
 
   const handleSubmit = () => {
@@ -667,30 +645,13 @@ export default function Home() {
                   🔍 RISERCA SEMANTICA
                 </p>
                 <button
-                  onClick={() => { setSearchResult(null); setRoutedNotice(null); }}
+                  onClick={() => setSearchResult(null)}
                   className="text-[10px] tracking-wider uppercase"
                   style={{ color: "var(--fg-muted)" }}
                 >
                   × chiudi
                 </button>
               </div>
-
-              {/* Auto-routed from "add": this looked like a question, not a note */}
-              {routedNotice && (
-                <div
-                  className="flex items-center justify-between gap-2 px-3 py-2 text-[10px]"
-                  style={{ border: "1px solid var(--border)", color: "var(--fg-muted)" }}
-                >
-                  <span className="tracking-wider uppercase">interpretato come domanda</span>
-                  <button
-                    onClick={forceSaveAsNote}
-                    className="uppercase tracking-wider whitespace-nowrap"
-                    style={{ color: "var(--accent)" }}
-                  >
-                    salva comunque come nota
-                  </button>
-                </div>
-              )}
 
               {searchResult.response && (
                 <div
