@@ -17,7 +17,14 @@ import { NextRequest, NextResponse } from "next/server";
  */
 
 export const SESSION_COOKIE = "askit_session";
-export const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+// A year, renewed on every page visit (see proxy.ts): a personal app on a phone
+// shouldn't ask for the password again unless it hasn't been opened for a year.
+// Stolen-cookie exposure is the trade-off; changing ASKIT_PASSWORD kills every session.
+export const SESSION_MAX_AGE = 60 * 60 * 24 * 365;
+
+export function sessionCookieOptions(secure: boolean) {
+  return { httpOnly: true, sameSite: "lax" as const, secure, path: "/", maxAge: SESSION_MAX_AGE };
+}
 
 const LABEL = "askit-session-v1";
 const encoder = new TextEncoder();

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE, SESSION_MAX_AGE, expectedSession, passwordMatches } from "@/lib/auth";
+import { SESSION_COOKIE, expectedSession, passwordMatches, sessionCookieOptions } from "@/lib/auth";
 
 // Serverless instances share no memory, so a real attempt counter isn't possible
 // here; a fixed delay on every failure at least makes guessing slow. Pick a long password.
@@ -22,13 +22,7 @@ export async function POST(req: NextRequest) {
   }
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(SESSION_COOKIE, expected, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: req.nextUrl.protocol === "https:",
-    path: "/",
-    maxAge: SESSION_MAX_AGE,
-  });
+  res.cookies.set(SESSION_COOKIE, expected, sessionCookieOptions(req.nextUrl.protocol === "https:"));
   return res;
 }
 

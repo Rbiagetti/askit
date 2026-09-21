@@ -44,8 +44,19 @@ export default function LoginPage() {
             Ask It
           </span>
         </div>
+        {/* Off-screen "username": without one, Safari/iCloud Keychain won't offer to save the password */}
+        <input
+          type="text"
+          name="username"
+          defaultValue="askit"
+          autoComplete="username"
+          tabIndex={-1}
+          aria-hidden="true"
+          style={{ position: "absolute", opacity: 0, height: 0, width: 0, pointerEvents: "none" }}
+        />
         <input
           type="password"
+          name="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Password"
