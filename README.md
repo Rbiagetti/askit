@@ -1,6 +1,6 @@
-# 🧠 Second Brain AI
+# 🗒️ Ask It
 
-Un secondo cervello personale a comando vocale: parli, lui capisce, ricorda e ritrova. Next.js 16
+Un blocco note a comando vocale: scrivi o detti appunti veloci, come post-it, senza badare a come; poi glielo chiedi. Lui capisce, ricorda e ritrova. Next.js 16
 (App Router), React 19, Turso (SQLite distribuito) su Vercel, Groq per LLM e trascrizione,
 embedding via Gemini API.
 
@@ -21,8 +21,6 @@ commerciali equivalenti chiedono 20-35 €/mese.
 - **Grafo della conoscenza** — le note si collegano fra loro per entità condivise, similarità
   semantica e, opzionalmente, relazioni ragionate dal modello (`DUPLICATES`, `CONTINUES`,
   `CONTRADICTS`, `RELATES_TO`).
-- **Mirror markdown per Obsidian** — ogni nota viene proiettata in un file `.md` con
-  frontmatter e `[[wikilink]]`, apribile come vault Obsidian con tanto di graph view.
 - **Domini a lista controllata** — l'AI assegna ogni nota a uno dei domini configurati (default: food, travel, work…) e non ne inventa altri, così le cartelle del Vault non si frammentano (`cibo`/`food`/`cucina`). La lista si modifica dall'ingranaggio in alto (`/api/settings`); fuori lista → `general`.
 - **Estetica Nothing Phone** — dark mode ad alto contrasto, dot-grid.
 
@@ -35,7 +33,7 @@ Dati di esempio, interfaccia mobile (l'app è pensata per il telefono).
 | Home | Ricerca | Vault |
 | :---: | :---: | :---: |
 | <img src="docs/screenshots/01-home.png" width="220" alt="Home con le memorie"> | <img src="docs/screenshots/02-search.png" width="220" alt="Ricerca semantica raggruppata per tema"> | <img src="docs/screenshots/03-vault.png" width="220" alt="Vault per dominio"> |
-| Lista delle memorie, tipo e dominio assegnati dall'AI | La risposta cita solo le note recuperate dal grafo | Cartelle per dominio, come nel mirror Obsidian |
+| Lista delle memorie, tipo e dominio assegnati dall'AI | La risposta cita solo le note recuperate dal grafo | Cartelle per dominio |
 
 | Elenco note | Dettaglio e grafo | Impostazioni |
 | :---: | :---: | :---: |
@@ -84,7 +82,7 @@ quando un risultato sorprende.
   (dettagli in `PIANO.md` §9)
 
 ```
-second-brain/
+askit/
 ├── src/
 │   ├── app/
 │   │   ├── api/
@@ -95,8 +93,7 @@ second-brain/
 │   │   │   ├── tree/         # note raggruppate per dominio/entità (vista Vault)
 │   │   │   ├── reindex/      # ricalcolo archi + embedding mancanti, gratis
 │   │   │   ├── reanalyze/    # ri-parsing LLM in batch, rate-limited
-│   │   │   ├── transcribe/   # audio -> testo
-│   │   │   └── vault/        # rigenerazione del mirror markdown
+│   │   │   └── transcribe/   # audio -> testo
 │   │   ├── globals.css
 │   │   ├── layout.tsx
 │   │   └── page.tsx
@@ -106,7 +103,6 @@ second-brain/
 │       ├── embed.ts          # embedding via Gemini API
 │       ├── graph.ts          # archi item<->item
 │       ├── groq.ts           # chiamate LLM
-│       ├── markdown.ts       # export vault Obsidian
 │       ├── settings.ts       # impostazioni utente (lista domini)
 │       ├── retrieve.ts       # i 4 generatori + fusione RRF
 │       ├── tfidf.ts          # duplicati lato client
@@ -114,7 +110,6 @@ second-brain/
 │       └── vector.ts         # cosine similarity
 ├── scripts/
 │   ├── backfill-embeddings.mjs
-│   ├── export-vault.mjs
 │   ├── rebuild-graph.mjs
 │   └── seed-synthetic.mjs    # corpus sintetico per i benchmark
 └── PIANO.md                  # progetto del refactor, con le misure
@@ -150,13 +145,12 @@ GEMINI_API_KEY=la_tua_chiave     # aistudio.google.com, per gli embedding
 # opzionali
 TURSO_DATABASE_URL=              # se assente, usa un file SQLite locale
 TURSO_AUTH_TOKEN=
-SB_TIMEZONE=Europe/Rome           # fuso per risolvere le date relative
-VAULT_PATH=~/second-brain-vault   # dove generare il mirror markdown
-SB_REASONED_LINKING=0             # 1 per attivare gli archi ragionati (vedi sotto)
-SB_DB_PATH=                       # per puntare a un file DB diverso (benchmark)
+ASKIT_TIMEZONE=Europe/Rome           # fuso per risolvere le date relative
+ASKIT_REASONED_LINKING=0             # 1 per attivare gli archi ragionati (vedi sotto)
+ASKIT_DB_PATH=                       # per puntare a un file DB diverso (benchmark)
 ```
 
-Senza `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN` l'app usa un file `secondbrain.db` locale — stesso
+Senza `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN` l'app usa un file `askit.db` locale — stesso
 codice, comportamento identico in sviluppo e in produzione (vedi `PIANO.md` §9.3).
 
 ### 3. Installazione e avvio
@@ -177,7 +171,6 @@ regione del database, cache in sola lettura) in `PIANO.md` §9.
 ```bash
 npm run embeddings:backfill   # genera i vettori mancanti
 npm run graph:rebuild         # costruisce gli archi item<->item
-npm run vault:export          # genera la vault markdown (serve l'app avviata)
 ```
 
 ---
@@ -191,21 +184,9 @@ npm run vault:export          # genera la vault markdown (serve l'app avviata)
 | **Output token/minuto** | **1.000** | il più stringente: `max_tokens` è una *prenotazione* contro questo limite, non solo un tetto |
 | Token/giorno | 200.000 | ~135 operazioni al giorno |
 
-Per questo `SB_REASONED_LINKING` è disattivato di default: i token di reasoning contano
+Per questo `ASKIT_REASONED_LINKING` è disattivato di default: i token di reasoning contano
 sull'OTPM, e il parsing di una nota ne prenota già 500. `CO_OCCURS` e `SIMILAR_TO` producono
 comunque un grafo utilizzabile a costo zero.
-
----
-
-## 📝 La vault markdown
-
-È un **mirror in sola lettura**: la fonte di verità è SQLite. Modificare un file a mano non ha
-effetto, viene sovrascritto al prossimo export. In cambio non c'è nessun sistema di
-sincronizzazione da mantenere, e ottieni portabilità, `git diff` leggibili e la graph view di
-Obsidian gratis.
-
-Le note vengono rispecchiate a ogni scrittura; `npm run vault:export` fa la rigenerazione
-completa. Puoi versionare la vault con un `git init` al suo interno, separato da questo repo.
 
 ---
 
@@ -214,9 +195,9 @@ completa. Puoi versionare la vault con un `git init` al suo interno, separato da
 Il criterio di progetto è che il costo del retrieval non dipenda dalla dimensione del corpus:
 
 ```bash
-sqlite3 secondbrain.db "VACUUM INTO '/tmp/bench.db'"
-SB_DB_PATH=/tmp/bench.db node scripts/seed-synthetic.mjs 200
-SB_DB_PATH=/tmp/bench.db node scripts/rebuild-graph.mjs
+sqlite3 askit.db "VACUUM INTO '/tmp/bench.db'"
+ASKIT_DB_PATH=/tmp/bench.db node scripts/seed-synthetic.mjs 200
+ASKIT_DB_PATH=/tmp/bench.db node scripts/rebuild-graph.mjs
 # poi punta l'app a /tmp/bench.db e interroga /api/search con {"dryRun": true}
 ```
 

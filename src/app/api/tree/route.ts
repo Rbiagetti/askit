@@ -25,6 +25,7 @@ export async function GET() {
     const itemsRs = await db.execute(
       `SELECT id, content, type, domain, time_ref AS timeRef, created_at AS createdAt
        FROM items
+       WHERE archived_at IS NULL
        ORDER BY created_at DESC`
     );
     const items = itemsRs.rows as unknown as TreeItem[];
@@ -61,6 +62,7 @@ export async function GET() {
        FROM entities e
        JOIN item_entities ie ON ie.entity_id = e.id
        JOIN items i ON i.id = ie.item_id
+       WHERE i.archived_at IS NULL
        ORDER BY e.name COLLATE NOCASE, i.created_at DESC`
     );
     const entityRows = entityRowsRs.rows as unknown as Array<{

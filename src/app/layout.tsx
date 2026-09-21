@@ -8,8 +8,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Second Brain AI",
-  description: "Una memoria esterna intelligente, a comando vocale",
+  title: "Ask It",
+  description: "Appunti veloci come post-it, a cui poi puoi fare domande",
 };
 
 // Non è un sito di contenuti da ingrandire — è un'app. Il pizzicare per

@@ -7,7 +7,7 @@
  *    arithmetic itself, which it gets wrong. We compute it here and state it.
  */
 
-export const TIMEZONE = process.env.SB_TIMEZONE || "Europe/Rome";
+export const TIMEZONE = process.env.ASKIT_TIMEZONE || "Europe/Rome";
 
 /** "Current datetime" block prepended to a prompt. */
 export function temporalContext(now: Date): string {

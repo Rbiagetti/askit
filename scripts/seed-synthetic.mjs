@@ -2,9 +2,9 @@
  * Fills a THROWAWAY database with synthetic Italian notes, to check that retrieval
  * cost stays flat as the corpus grows (PIANO.md Fase 4, acceptance criterion).
  *
- *   SB_DB_PATH=/tmp/bench.db node scripts/seed-synthetic.mjs 200
+ *   ASKIT_DB_PATH=/tmp/bench.db node scripts/seed-synthetic.mjs 200
  *
- * Refuses to touch secondbrain.db. Entities are extracted by a crude heuristic
+ * Refuses to touch askit.db. Entities are extracted by a crude heuristic
  * (capitalised words) rather than the LLM — the point is graph shape and volume,
  * not parse quality, and 200 LLM calls would blow the free tier.
  */
@@ -22,11 +22,11 @@ const API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = "gemini-embedding-001";
 const EMBED_DIM = 768;
 const EMBED_MODEL = `gemini/${GEMINI_MODEL}@${EMBED_DIM}`;
-const DB_PATH = process.env.SB_DB_PATH;
+const DB_PATH = process.env.ASKIT_DB_PATH;
 const COUNT = Number(process.argv[2] || 200);
 
-if (!DB_PATH || DB_PATH.endsWith("secondbrain.db")) {
-  console.error("Set SB_DB_PATH to a throwaway database (not secondbrain.db).");
+if (!DB_PATH || DB_PATH.endsWith("askit.db")) {
+  console.error("Set ASKIT_DB_PATH to a throwaway database (not askit.db).");
   process.exit(1);
 }
 if (!API_KEY) {

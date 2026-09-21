@@ -196,9 +196,9 @@ function fuse(lists: Array<{ source: Source; ids: string[] }>) {
 
 export async function retrieve(
   input: string,
-  opts: { limit?: number; hops?: 1 | 2; excludeId?: string } = {}
+  opts: { limit?: number; hops?: 1 | 2; excludeId?: string; includeArchived?: boolean } = {}
 ): Promise<RetrievalResult> {
-  const { limit = DEFAULT_LIMIT, hops = 2, excludeId } = opts;
+  const { limit = DEFAULT_LIMIT, hops = 2, excludeId, includeArchived = false } = opts;
   const db = await getDb();
 
   // Turso is a remote DB (see PIANO.md §9): every execute() is a network round
@@ -207,12 +207,18 @@ export async function retrieve(
   // but vector/fts/corpusSize don't depend on anything here or on each other —
   // they used to be awaited one after another regardless. Running them
   // concurrently turns ~4 sequential round trips into 2 sequential stages.
-  const [anchors, vector, fts, corpusRs] = await Promise.all([
+  const [anchors, vector, fts, corpusRs, archivedRs] = await Promise.all([
     findAnchors(input, excludeId),
     vectorNeighbors(input, excludeId),
     lexicalMatches(input, excludeId),
-    db.execute("SELECT COUNT(*) AS n FROM items"),
+    db.execute("SELECT COUNT(*) AS n FROM items WHERE archived_at IS NULL"),
+    db.execute("SELECT id FROM items WHERE archived_at IS NOT NULL"),
   ]);
+  // Archived notes still take part in graph traversal (they can bridge two live
+  // notes) but are never returned as results.
+  const archivedIds = includeArchived
+    ? new Set<string>()
+    : new Set(archivedRs.rows.map((r) => r.id as string));
   const graph = await expandNeighborhood(anchors, hops, excludeId);
 
   const ranked = fuse([
@@ -220,7 +226,9 @@ export async function retrieve(
     { source: "graph", ids: graph },
     { source: "vector", ids: vector },
     { source: "fts", ids: fts },
-  ]).slice(0, limit);
+  ])
+    .filter(([id]) => !archivedIds.has(id))
+    .slice(0, limit);
 
   const corpusSize = Number((corpusRs.rows[0] as unknown as { n: number }).n);
   if (ranked.length === 0) {

@@ -139,13 +139,13 @@ export interface ReasonedEdge {
  *
  * OFF by default because of the free tier's 1000 output-tokens-per-minute ceiling —
  * reasoning tokens count towards it, and parsing a note already reserves 500. Enable
- * with SB_REASONED_LINKING=1 when the extra relation types are worth the budget.
+ * with ASKIT_REASONED_LINKING=1 when the extra relation types are worth the budget.
  * CO_OCCURS and SIMILAR_TO already produce a usable graph at zero cost.
  *
  * Runs strictly over candidates already shortlisted by retrieve() — never the corpus.
  */
 export function isReasonedLinkingEnabled(): boolean {
-  return process.env.SB_REASONED_LINKING === "1";
+  return process.env.ASKIT_REASONED_LINKING === "1";
 }
 
 export async function saveReasonedEdges(

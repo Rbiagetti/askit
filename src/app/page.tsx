@@ -38,6 +38,7 @@ export default function Home() {
   const [dupClusters, setDupClusters] = useState<DuplicateCluster[]>([]);
   const [showDup, setShowDup] = useState(false);
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const now = new Date();
@@ -60,6 +61,8 @@ export default function Home() {
   // Refs mirroring state read inside async/timer callbacks, to avoid stale closures
   const modeRef = useRef(mode);
   const processingRef = useRef(processing);
+  const memoriesRef = useRef(memories);
+  useEffect(() => { memoriesRef.current = memories; }, [memories]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { processingRef.current = processing; }, [processing]);
 
@@ -82,7 +85,7 @@ export default function Home() {
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
-    const tok = localStorage.getItem("sb_tokens");
+    const tok = localStorage.getItem("askit_tokens");
     if (tok) {
       setTimeout(() => {
         setTotalTokens(parseInt(tok));
@@ -91,7 +94,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("sb_tokens", String(totalTokens));
+    localStorage.setItem("askit_tokens", String(totalTokens));
   }, [totalTokens]);
 
   const showToast = (msg: string, ok = true) => {
@@ -180,12 +183,44 @@ export default function Home() {
 
 
 
+  // Archived notes stay out of the list, calendar, duplicates and search until restored.
+  const activeMemories = memories.filter((m) => !m.archivedAt);
+  const archivedMemories = memories.filter((m) => !!m.archivedAt);
+  const listedMemories = showArchived ? archivedMemories : activeMemories;
+
   // ── Delete → SQLite ──
   const deleteMemory = useCallback((id: string) => {
     setMemories((prev) => prev.filter((m) => m.id !== id));
     // removed askResult update
     fetch("/api/items", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
     showToast("Eliminata");
+  }, []);
+
+  // ── Archive / restore → SQLite ──
+  // Flips archivedAt optimistically (the card has already played its exit
+  // animation), and rolls back with a toast if the PATCH doesn't go through.
+  const toggleArchive = useCallback((id: string) => {
+    const current = memoriesRef.current.find((m) => m.id === id);
+    if (!current) return;
+    const archive = !current.archivedAt;
+    setMemories((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, archivedAt: archive ? Date.now() : null } : m))
+    );
+    fetch("/api/items", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, archived: archive }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error();
+        showToast(archive ? "Archiviata" : "Ripristinata");
+      })
+      .catch(() => {
+        setMemories((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, archivedAt: archive ? null : Date.now() } : m))
+        );
+        showToast("Errore: operazione non riuscita", false);
+      });
   }, []);
 
   // ── Update memory → SQLite ──
@@ -218,7 +253,7 @@ export default function Home() {
 
   // ── Detect duplicates (client-side TF-IDF) ──
   const runDupDetection = () => {
-    const clusters = detectDuplicates(memories.map((m) => ({ id: m.id, text: m.content || m.text })));
+    const clusters = detectDuplicates(activeMemories.map((m) => ({ id: m.id, text: m.content || m.text })));
     if (!clusters.length) { showToast("Nessun duplicato trovato"); return; }
     setDupClusters(clusters);
     setShowDup(true);
@@ -414,7 +449,7 @@ export default function Home() {
     else if (mode === "search") executeSearch();
   };
 
-  const datedMemories = memories
+  const datedMemories = activeMemories
     .map((m) => {
       const dt = parseTimeRef(m.timeRef);
       return dt ? { memory: m, date: dt, key: toDateKey(dt) } : null;
@@ -455,7 +490,7 @@ export default function Home() {
                 <div className="glyph-dot" style={{ animationDelay: "0.6s" }} />
               </div>
               <span className="text-[11px] tracking-[0.2em] uppercase" style={{ color: "var(--accent)" }}>
-                Second Brain
+                Ask It
               </span>
             </div>
             {toast && (
@@ -537,7 +572,7 @@ export default function Home() {
               {/* Duplicate detect */}
               <button
                 onClick={runDupDetection}
-                disabled={memories.length < 2}
+                disabled={activeMemories.length < 2}
                 className="w-9 h-9 flex items-center justify-center border transition-all disabled:opacity-20"
                 style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
                 title="Trova memorie simili o duplicate"
@@ -665,7 +700,7 @@ export default function Home() {
               {searchResult.clusters && searchResult.clusters.length > 0 ? (
                 <div className="space-y-4">
                   {searchResult.clusters.map((cluster, idx) => {
-                    const clusterMems = memories.filter((m) => cluster.items.includes(m.id));
+                    const clusterMems = activeMemories.filter((m) => cluster.items.includes(m.id));
                     if (clusterMems.length === 0) return null;
                     return (
                       <div key={idx} className="space-y-1">
@@ -677,7 +712,7 @@ export default function Home() {
                         </div>
                         <div className="space-y-0.5">
                           {clusterMems.map((m) => (
-                            <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} highlight />
+                            <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} onArchive={toggleArchive} highlight />
                           ))}
                         </div>
                       </div>
@@ -768,7 +803,7 @@ export default function Home() {
                 ) : (
                   <div className="space-y-1">
                     {selectedDayMemories.map((m) => (
-                      <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} />
+                      <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} onArchive={toggleArchive} />
                     ))}
                   </div>
                 )}
@@ -796,8 +831,25 @@ export default function Home() {
             </div>
           ) : mode !== "calendar" && mode !== "vault" ? (
             <div className="pt-2 pb-4">
-              {memories.map((m) => (
-                <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} />
+              {/* Active ⇄ archived switch; only shown once something has been archived */}
+              {(archivedMemories.length > 0 || showArchived) && (
+                <div className="flex justify-end px-4 pb-1">
+                  <button
+                    onClick={() => setShowArchived((v) => !v)}
+                    className="text-[10px] tracking-[0.12em] uppercase"
+                    style={{ color: "var(--fg-dim)" }}
+                  >
+                    {showArchived ? "← attive" : `archiviate (${archivedMemories.length})`}
+                  </button>
+                </div>
+              )}
+              {listedMemories.length === 0 && (
+                <p className="text-xs tracking-wider text-center py-16" style={{ color: "var(--fg-muted)" }}>
+                  {showArchived ? "Nessuna nota archiviata." : "Tutto archiviato. Scrivi qualcosa di nuovo."}
+                </p>
+              )}
+              {listedMemories.map((m) => (
+                <MemoryCard key={m.id} memory={m} onDelete={deleteMemory} onEdit={setEditingMemory} onArchive={toggleArchive} />
               ))}
             </div>
           ) : null}
@@ -813,7 +865,7 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full" style={{ background: loaded ? "var(--green)" : "var(--fg-muted)" }} />
             <span className="text-[10px] tracking-[0.12em] uppercase" style={{ color: "var(--fg-muted)" }}>
-              {memories.length} {memories.length === 1 ? "memoria" : "memorie"}
+              {activeMemories.length} {activeMemories.length === 1 ? "memoria" : "memorie"}
             </span>
           </div>
           <span className="text-[10px]" style={{ color: "var(--fg-muted)" }}>

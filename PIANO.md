@@ -4,6 +4,8 @@
 > Il contesto inviato deve dipendere dal **vicinato nel grafo**, non dalla dimensione totale del database.
 > Vincolo di progetto: restare dentro il free tier Groq (30 req/min, 8.000 token/min, 200.000 token/giorno).
 
+> **Rinomina (settembre 2026):** il progetto si chiama ora **Ask It** (prima «Second Brain»). Le sezioni storiche qui sotto conservano i nomi di allora: `secondbrain.db` → `askit.db`, `SB_DB_PATH` → `ASKIT_DB_PATH`, `~/second-brain-vault` → `~/askit-vault`. Il database Turso in produzione si chiama ancora `secondbrain`. Il mirror markdown/Obsidian (Fase 5, `lib/markdown.ts`, `/api/vault`, `vault:export`) è stato rimosso: le sezioni che lo descrivono sono storiche. `SB_TIMEZONE` e `SB_REASONED_LINKING` sono diventate `ASKIT_TIMEZONE` e `ASKIT_REASONED_LINKING`.
+
 Data: settembre 2026 · Stato: **completato e in produzione** (Fasi 0-5, backlog usabilità, migrazione Turso/Vercel/Gemini — vedi §8 e §9)
 
 > Registro cronologico del progetto: decisioni, misure e anche i vicoli ciechi, scritto mentre il lavoro avveniva. Le sezioni più vecchie descrivono lo stato *di allora* (es. embedding locali, SQLite su file) e sono superate da §9.

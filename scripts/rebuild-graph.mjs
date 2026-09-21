@@ -15,7 +15,7 @@ const MIN_CORPUS_FOR_SIMILARITY = 5;
 const TOP_K = 3;
 const MIN_Z = 1.5;
 
-const db = new Database(process.env.SB_DB_PATH || path.join(process.cwd(), "secondbrain.db"));
+const db = new Database(process.env.ASKIT_DB_PATH || path.join(process.cwd(), "askit.db"));
 db.pragma("journal_mode = WAL");
 
 db.exec(`DELETE FROM edges WHERE rowid NOT IN (

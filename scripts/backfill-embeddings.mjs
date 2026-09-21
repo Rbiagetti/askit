@@ -30,7 +30,7 @@ const EMBED_DIM = 768;
 const EMBED_MODEL = `gemini/${GEMINI_MODEL}@${EMBED_DIM}`;
 const BATCH = 16; // Gemini's batchEmbedContents has its own per-request limits; 16 stays well under them
 
-const db = new Database(process.env.SB_DB_PATH || path.join(process.cwd(), "secondbrain.db"));
+const db = new Database(process.env.ASKIT_DB_PATH || path.join(process.cwd(), "askit.db"));
 db.pragma("journal_mode = WAL");
 
 try {

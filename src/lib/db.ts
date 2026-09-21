@@ -3,14 +3,14 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 
 // Overridable so benchmarks and tests can run against a throwaway copy
-const DB_PATH = process.env.SB_DB_PATH || path.join(process.cwd(), "secondbrain.db");
+const DB_PATH = process.env.ASKIT_DB_PATH || path.join(process.cwd(), "askit.db");
 
 // Same client works against a local file and against remote Turso: with no
 // TURSO_* env vars set (local dev, and today's deploys) this resolves to
 // `file:<DB_PATH>` and behaves exactly like the previous better-sqlite3 setup.
 // On Vercel, setting TURSO_DATABASE_URL + TURSO_AUTH_TOKEN points the same
 // code at a remote Turso database — no branching logic needed anywhere else.
-const DB_URL = process.env.TURSO_DATABASE_URL || process.env.SB_DB_PATH_URL || `file:${DB_PATH}`;
+const DB_URL = process.env.TURSO_DATABASE_URL || process.env.ASKIT_DB_PATH_URL || `file:${DB_PATH}`;
 
 let _client: Client | null = null;
 // Memoized migration promise: guarantees migrate() runs exactly once even
@@ -123,6 +123,9 @@ async function migrate(c: Client): Promise<void> {
     // manual override guard (set by PATCH /api/items, see items/route.ts): when set,
     // /api/reanalyze must not overwrite domain with the model's new guess
     "ALTER TABLE items ADD COLUMN domain_locked INTEGER NOT NULL DEFAULT 0",
+    // soft-archive: a note that's "solved" leaves the list, the calendar and the
+    // search results but stays in the DB (and can be restored). NULL = active.
+    "ALTER TABLE items ADD COLUMN archived_at TEXT",
     // traversal goes both ways: entity -> items, not just item -> entities
     "CREATE INDEX IF NOT EXISTS idx_item_entities_entity ON item_entities(entity_id)",
     // collapse any pre-existing duplicates, then make the upserts in lib/graph.ts possible

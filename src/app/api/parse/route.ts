@@ -9,7 +9,6 @@ import {
   type ReasonedType,
 } from "@/lib/graph";
 import { retrieve } from "@/lib/retrieve";
-import { mirror } from "@/lib/markdown";
 
 export async function POST(req: NextRequest) {
   try {
@@ -65,8 +64,6 @@ export async function POST(req: NextRequest) {
         // linking is an enhancement; never fail the save because of it
       }
     }
-
-    await mirror(itemId);
 
     return NextResponse.json({
       routed: "save",

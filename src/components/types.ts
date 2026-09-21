@@ -9,6 +9,8 @@ export interface Memory {
   usageCount: number;
   timeRef?: string | null;
   timeConfidence?: number;
+  /** ms epoch; null/undefined = active */
+  archivedAt?: number | null;
 }
 
 export interface SearchResult {

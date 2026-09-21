@@ -7,8 +7,8 @@ import { getDb } from "@/lib/db";
  * CO_OCCURS, DUPLICATES, ...), with the edge type and the partner note's own
  * summary so a caller doesn't need a second round-trip to render a link.
  *
- * Direct queries via getDb(), same pattern as src/lib/retrieve.ts and
- * src/lib/markdown.ts — no new db.ts helpers needed for this.
+ * Direct queries via getDb(), same pattern as src/lib/retrieve.ts —
+ * no new db.ts helpers needed for this.
  */
 
 interface ItemRow {

@@ -1,5 +1,5 @@
 {
-  "name": "second-brain",
+  "name": "askit",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,8 +9,7 @@
     "lint": "eslint",
     "embeddings:backfill": "node scripts/backfill-embeddings.mjs",
     "graph:rebuild": "node scripts/rebuild-graph.mjs",
-    "bench:seed": "node scripts/seed-synthetic.mjs",
-    "vault:export": "node scripts/export-vault.mjs"
+    "bench:seed": "node scripts/seed-synthetic.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.18.0",

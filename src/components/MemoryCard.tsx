@@ -8,14 +8,18 @@ import { useState, useRef, useCallback, useEffect } from "react";
 // mouse-driven), hover reveals the action bar, so this never matters there.
 const MOBILE_BREAKPOINT = 640;
 
+// Each side of the card has a short and a long gesture:
+//   swipe right, short  → edit
+//   swipe right, long   → archive (or restore, from the archived list)
+//   swipe left,  long   → delete for good (there's no short gesture on this side)
 // Delete is destructive and irreversible, edit isn't — so they don't share a
 // threshold. 60px (roughly a light flick) turned out to delete real notes by
 // accident, reported by the user. Deleting now needs a swipe that travels
 // most of the card's width and is held there at release — hard to do without
-// meaning to, easy to do on purpose. Edit keeps the old, lighter threshold.
-const DELETE_MAX_DRAG = 220;
-const DELETE_ARM_THRESHOLD = 170;
-const EDIT_MAX_DRAG = 100;
+// meaning to, easy to do on purpose. Archive is reversible, but sits on the
+// same long-drag distance so a release in between still just means "edit".
+const MAX_DRAG = 220;
+const ARM_THRESHOLD = 170;
 const EDIT_THRESHOLD = 60;
 import { Memory } from "./types";
 
@@ -55,13 +59,17 @@ export default function MemoryCard({
   memory,
   onDelete,
   onEdit,
+  onArchive,
   highlight = false,
 }: {
   memory: Memory;
   onDelete: (id: string) => void;
   onEdit: (memory: Memory) => void;
+  /** archive an active note, or restore an archived one (see memory.archivedAt) */
+  onArchive: (id: string) => void;
   highlight?: boolean;
 }) {
+  const archived = !!memory.archivedAt;
   const [swipeX, setSwipeX] = useState(0);
   const [activelySwiping, setActivelySwiping] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -87,6 +95,12 @@ export default function MemoryCard({
     setLeaving(true);
     setTimeout(() => onDelete(memory.id), 250);
   }, [memory.id, onDelete]);
+
+  const doArchive = useCallback(() => {
+    setActionsOpen(false);
+    setLeaving(true);
+    setTimeout(() => onArchive(memory.id), 250);
+  }, [memory.id, onArchive]);
 
   const cancelLongPress = () => {
     if (longPressTimer.current) {
@@ -130,21 +144,18 @@ export default function MemoryCard({
       // Desktop/tablet keeps the old swipe-left-only-to-delete behaviour
       // (right swipe there does nothing, hover already reveals both actions).
       // Mobile gets both directions: left deletes, right edits.
-      if (dx < 0) {
+      if (dx < 0 || (isMobile && dx > 0)) {
         setActivelySwiping(true);
-        const clamped = Math.max(dx, -DELETE_MAX_DRAG);
+        const clamped = Math.max(-MAX_DRAG, Math.min(dx, MAX_DRAG));
         setSwipeX(clamped);
-        // One buzz the moment it crosses into "this will actually delete"
-        // territory — confirms the commitment before release, not after.
-        if (clamped <= -DELETE_ARM_THRESHOLD && !armedHaptic.current) {
+        // One buzz the moment it crosses into "this will actually delete /
+        // archive" territory — confirms the commitment before release, not after.
+        if (Math.abs(clamped) >= ARM_THRESHOLD && !armedHaptic.current) {
           armedHaptic.current = true;
           if (navigator.vibrate) navigator.vibrate(15);
-        } else if (clamped > -DELETE_ARM_THRESHOLD) {
+        } else if (Math.abs(clamped) < ARM_THRESHOLD) {
           armedHaptic.current = false;
         }
-      } else if (isMobile && dx > 0) {
-        setActivelySwiping(true);
-        setSwipeX(Math.min(dx, EDIT_MAX_DRAG));
       }
     }
   };
@@ -153,8 +164,11 @@ export default function MemoryCard({
     cancelLongPress();
     setActivelySwiping(false);
     if (didLongPress.current) return;
-    if (swipeX <= -DELETE_ARM_THRESHOLD) {
+    if (swipeX <= -ARM_THRESHOLD) {
       doDelete();
+    } else if (isMobile && swipeX >= ARM_THRESHOLD) {
+      setSwipeX(0);
+      doArchive();
     } else if (isMobile && swipeX > EDIT_THRESHOLD) {
       setSwipeX(0);
       onEdit(memory);
@@ -165,15 +179,20 @@ export default function MemoryCard({
 
   const showActions = actionsOpen || (!isTouchDevice && hovered);
   const color = DOMAIN_COLOR[memory.domain] || DOMAIN_COLOR.general;
-  const deleteArmed = swipeX <= -DELETE_ARM_THRESHOLD;
-  const deleteProgress = Math.min(Math.abs(Math.min(swipeX, 0)) / DELETE_ARM_THRESHOLD, 1);
+  const deleteArmed = swipeX <= -ARM_THRESHOLD;
+  const deleteProgress = Math.min(Math.abs(Math.min(swipeX, 0)) / ARM_THRESHOLD, 1);
   const editProgress = Math.min(Math.max(swipeX, 0) / EDIT_THRESHOLD, 1);
+  const archiveArmed = swipeX >= ARM_THRESHOLD;
+  // past the edit threshold the right side turns into the archive hint
+  const archiveHint = swipeX > EDIT_THRESHOLD + 20;
+  const archiveProgress = Math.min(Math.max(swipeX - EDIT_THRESHOLD, 0) / (ARM_THRESHOLD - EDIT_THRESHOLD), 1);
+  const archiveVerb = archived ? "ripristinare" : "archiviare";
 
   if (leaving) return <div style={{ maxHeight: 0, opacity: 0, overflow: "hidden", transition: "all 0.25s" }} />;
 
   return (
     <div className="relative overflow-hidden" style={{ marginBottom: 1 }}>
-      {/* Swipe bg — left: delete (all screens), right: edit (mobile only) */}
+      {/* Swipe bg — left: delete (all screens), right: edit → archive (mobile only) */}
       <div
         className="absolute inset-0 flex items-center justify-end pr-5"
         style={{
@@ -189,12 +208,17 @@ export default function MemoryCard({
         <div
           className="absolute inset-0 flex items-center justify-start pl-5"
           style={{
-            background: `rgba(255,255,255,${editProgress * 0.14})`,
+            background: archiveHint
+              ? `rgba(52,199,89,${0.15 + archiveProgress * 0.75})`
+              : `rgba(255,255,255,${editProgress * 0.14})`,
             visibility: swipeX > 8 ? "visible" : "hidden",
           }}
         >
-          <span className="text-[11px] tracking-widest uppercase font-mono" style={{ color: "var(--fg)" }}>
-            modifica
+          <span
+            className="text-[11px] tracking-widest uppercase font-mono"
+            style={{ color: archiveHint ? "#fff" : "var(--fg)" }}
+          >
+            {archiveArmed ? `rilascia per ${archiveVerb}` : archiveHint ? `tieni per ${archiveVerb}` : "modifica"}
           </span>
         </div>
       )}
@@ -209,6 +233,7 @@ export default function MemoryCard({
             ? "rgba(255,255,255,0.03)"
             : "transparent",
           borderLeft: `2px solid ${showActions ? "rgba(255,255,255,0.2)" : highlight ? color : "transparent"}`,
+          opacity: archived ? 0.55 : 1,
           transform: `translateX(${swipeX}px)`,
           transition: activelySwiping ? "none" : "transform 0.22s ease, background 0.15s, border-color 0.15s",
           // Without this, a touch that starts moving horizontally still lets
@@ -298,6 +323,21 @@ export default function MemoryCard({
                 }}
               >
                 ✎ Modifica
+              </button>
+              <button
+                onTouchEnd={(e) => {
+                  e.stopPropagation();
+                  doArchive();
+                }}
+                onClick={doArchive}
+                className="flex-1 py-1.5 text-[11px] tracking-[0.12em] uppercase border transition-colors"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--fg-muted)",
+                  background: "rgba(255,255,255,0.04)",
+                }}
+              >
+                {archived ? "↺ Ripristina" : "▣ Archivia"}
               </button>
               <button
                 onTouchEnd={(e) => {
