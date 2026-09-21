@@ -4,7 +4,7 @@
 > Il contesto inviato deve dipendere dal **vicinato nel grafo**, non dalla dimensione totale del database.
 > Vincolo di progetto: restare dentro il free tier Groq (30 req/min, 8.000 token/min, 200.000 token/giorno).
 
-> **Rinomina (settembre 2026):** il progetto si chiama ora **Ask It** (prima «Second Brain»). Le sezioni storiche qui sotto conservano i nomi di allora: `secondbrain.db` → `askit.db`, `SB_DB_PATH` → `ASKIT_DB_PATH`, `~/second-brain-vault` → `~/askit-vault`. Il database Turso in produzione si chiama ancora `secondbrain`. Il mirror markdown/Obsidian (Fase 5, `lib/markdown.ts`, `/api/vault`, `vault:export`) è stato rimosso: le sezioni che lo descrivono sono storiche. `SB_TIMEZONE` e `SB_REASONED_LINKING` sono diventate `ASKIT_TIMEZONE` e `ASKIT_REASONED_LINKING`.
+> **Ask It (settembre 2026):** il progetto si chiama Ask It e il database Turso di produzione è `askit`. Il mirror markdown/Obsidian (Fase 5, `lib/markdown.ts`, `/api/vault`, `vault:export`) è stato rimosso: le sezioni che lo descrivono sono storiche.
 
 Data: settembre 2026 · Stato: **completato e in produzione** (Fasi 0-5, backlog usabilità, migrazione Turso/Vercel/Gemini — vedi §8 e §9)
 
@@ -50,11 +50,11 @@ via `/api/reindex` (gratis) e `/api/reanalyze` (protetto da rate limit).
 **Incidente e correzione**: il Fronte C, testando `POST /api/vault` su un server locale
 con DB isolato, ha usato per errore il `VAULT_PATH` di default — la vault Obsidian
 **reale** dell'utente, non isolata dal worktree — sovrascrivendola con 5 note di test.
-`secondbrain.db` (fonte di verità) non è mai stato toccato. Rilevato dall'agente stesso,
-verificato prima del merge (`sqlite3 secondbrain.db` → 9 item reali intatti), corretto
+`askit.db` (fonte di verità) non è mai stato toccato. Rilevato dall'agente stesso,
+verificato prima del merge (`sqlite3 askit.db` → 9 item reali intatti), corretto
 con `npm run vault:export`: vault reale rigenerata, nessuna perdita. Lezione per il
 futuro: quando un worktree di test tocca risorse esterne al repo (filesystem fuori
-dalla working dir, non solo il DB), va isolato esplicitamente anche quello, non solo `SB_DB_PATH`.
+dalla working dir, non solo il DB), va isolato esplicitamente anche quello, non solo `ASKIT_DB_PATH`.
 
 **Limite scoperto, non un bug**: il routing su `intent` dipende dalla classificazione
 di `qwen/qwen3.6-27b`, che su frasi genuinamente ambigue («cosa devo comprare domani?»
@@ -107,7 +107,7 @@ const client = createClient({
 ```
 
 Senza le variabili `TURSO_*` impostate, il comportamento resta **identico a oggi** (stesso
-file `secondbrain.db`, via `@libsql/client` invece di `better-sqlite3` ma stesso risultato).
+file `askit.db`, via `@libsql/client` invece di `better-sqlite3` ma stesso risultato).
 Con le variabili impostate (solo su Vercel), si connette a Turso. Il refactor sync→async
 paga quindi una sola volta, indipendentemente da dove poi si decide di ospitare l'app.
 
@@ -142,9 +142,9 @@ paga quindi una sola volta, indipendentemente da dove poi si decide di ospitare 
   ```bash
   curl -sSfL https://get.tur.so/install.sh | bash
   turso auth login
-  turso db create secondbrain
-  turso db show secondbrain --url        # -> TURSO_DATABASE_URL
-  turso db tokens create secondbrain     # -> TURSO_AUTH_TOKEN
+  turso db create askit
+  turso db show askit --url        # -> TURSO_DATABASE_URL
+  turso db tokens create askit     # -> TURSO_AUTH_TOKEN
   ```
   Le due variabili vanno aggiunte a `.env.local` in locale e alle variabili d'ambiente
   del progetto Vercel per il deploy — sono credenziali, non passano per la chat.
@@ -202,7 +202,7 @@ cancellarla) deve produrre lo stesso risultato di oggi, in entrambe le modalità
 
 ## 1. Stato attuale verificato
 
-Tutto quanto segue è stato verificato leggendo il codice e interrogando `secondbrain.db`, non è stimato.
+Tutto quanto segue è stato verificato leggendo il codice e interrogando `askit.db`, non è stimato.
 
 ### 1.1 Il grafo non è un grafo
 
@@ -365,7 +365,7 @@ Nessuna modifica funzionale. Serve a non portarsi dietro rumore nelle fasi succe
   Ask Mode rimossa, pubblicizza la ricerca semantica che non funziona (§1.2), indica
   Llama-3.3-70b mentre il codice usa `qwen/qwen3.6-27b`, documenta `ingest_test.py` che è gitignored.
   Riscrivere dopo la Fase 4, non ora, per non doverlo fare due volte.
-- `secondbrain.db-wal` è **4,0 MB** contro un DB di 256 KB: WAL mai checkpointato.
+- `askit.db-wal` è **4,0 MB** contro un DB di 256 KB: WAL mai checkpointato.
   `PRAGMA wal_checkpoint(TRUNCATE);` una tantum.
 - `.claude/` non tracciata: decidere se committarla o aggiungerla a `.gitignore`.
 
@@ -578,7 +578,7 @@ Se un giorno emergesse il bisogno reale di editare da Obsidian, l'upgrade a bidi
 incrementale: lo schema dei file è già definito qui.
 
 **Posizione della vault:** fuori dal repo, via `VAULT_PATH` in `.env.local`
-(default `~/second-brain-vault`). Motivo: è dato personale, come `secondbrain.db` che è già
+(default `~/askit-vault`). Motivo: è dato personale, come `askit.db` che è già
 gitignored. Così l'utente può versionarla con un `git init` suo, separato dal repo dell'app.
 Aggiungere comunque `vault/` a `.gitignore` per sicurezza.
 
@@ -592,7 +592,7 @@ export async function exportAll(): Promise<{ written: number; deleted: number }>
 **Struttura della vault:**
 
 ```
-~/second-brain-vault/
+~/askit-vault/
 ├── README.md                    ← "generata automaticamente, non editare qui"
 ├── .index.json                  ← mappa itemId → filename corrente
 ├── notes/
